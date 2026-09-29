@@ -264,7 +264,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
             await remote.async_connect()
 
-        hass.async_create_task(setup_components_and_platforms())
+        entry.async_create_background_task(
+            hass,
+            setup_components_and_platforms(),
+            f"{DOMAIN}_connect_{entry.entry_id}",
+        )
 
         return True
 
