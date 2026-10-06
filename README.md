@@ -69,17 +69,24 @@ You can generate an access token in the by logging into your remote instance, cl
 
 Check "Secure" if you want to connect via a secure (https/wss) connection
 
-3. After the instance is added, you can configure additional Options by clicking the "Options" button.
+3. Before the first connection, choose which remote domains or entities to import.
+   You can also exclude domains or entities and set a prefix. The integration
+   does not import any entities until you select at least one domain or entity,
+   or explicitly choose "Import all entities". Exclusions take precedence.
+   An entity prefix is prepended directly to the object ID, so use a trailing
+   underscore (for example, `casa_`) if you want one in the resulting ID.
+
+4. After the instance is added, you can configure additional Options by clicking the "Options" button.
 
 <img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/options.png" height="200"/>
 
-4. You can configure an optional prefix that gets prepended to all remote entities (if unsure, leave this blank).
+5. You can configure an optional prefix that gets prepended to all remote entities (if unsure, leave this blank).
 
 <img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/step1.png" height="200"/>
 
 Click "Submit" to proceed to the next step.
 
-5. You can also define filters, that include/exclude specified entities or domains from the remote instance.
+6. You can also change the filters to include/exclude specified entities or domains from the remote instance.
 
 <img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/step2.png" height="200"/>
 
