@@ -49,16 +49,19 @@ from .const import (
 )
 from .rest_api import (
     ApiProblem,
+    BadResponse,
     CannotConnect,
     EndpointMissing,
     InvalidAuth,
     UnsupportedVersion,
     async_get_discovery_info,
+    async_get_remote_entity_ids,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 ADD_NEW_EVENT = "add_new_event"
+CONF_IMPORT_ALL = "import_all"
 
 FILTER_OPTIONS = [CONF_ENTITY_ID, CONF_UNIT_OF_MEASUREMENT, CONF_ABOVE, CONF_BELOW]
 
@@ -108,6 +111,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_SECURE: True,
             CONF_MAX_MSG_SIZE: DEFAULT_MAX_MSG_SIZE,
         }
+        self._connection_data: dict[str, Any] | None = None
+        self._remote_title: str | None = None
+        self._remote_entities: list[str] = []
 
     @staticmethod
     @callback
@@ -147,7 +153,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 info = await validate_input(self.hass, user_input)
-            except ApiProblem:
+                entities = await async_get_remote_entity_ids(
+                    self.hass,
+                    user_input[CONF_HOST],
+                    user_input[CONF_PORT],
+                    user_input.get(CONF_SECURE, False),
+                    user_input[CONF_ACCESS_TOKEN],
+                    user_input.get(CONF_VERIFY_SSL, True),
+                )
+            except (ApiProblem, BadResponse):
                 errors["base"] = "api_problem"
             except CannotConnect:
                 errors["base"] = "cannot_connect"
@@ -163,9 +177,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(info["uuid"])
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=info["title"], data=user_input
-                )
+                self._connection_data = user_input.copy()
+                self._remote_title = info["title"]
+                self._remote_entities = entities
+                return await self.async_step_entity_selection()
 
         user_input = user_input or {}
         host = user_input.get(CONF_HOST, self.prefill.get(CONF_HOST) or vol.UNDEFINED)
@@ -192,6 +207,75 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_VERIFY_SSL,
                         default=user_input.get(CONF_VERIFY_SSL, True),
                     ): bool,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_entity_selection(self, user_input=None):
+        """Choose which remote entities are imported on the first connection."""
+        if self._connection_data is None or self._remote_title is None:
+            return await self.async_step_connection_details()
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            import_all = user_input.get(CONF_IMPORT_ALL, False)
+            include_domains = user_input.get(CONF_INCLUDE_DOMAINS, [])
+            include_entities = user_input.get(CONF_INCLUDE_ENTITIES, [])
+
+            if not import_all and not (include_domains or include_entities):
+                errors["base"] = "select_entities"
+            else:
+                options = {
+                    CONF_INCLUDE_DOMAINS: [] if import_all else include_domains,
+                    CONF_INCLUDE_ENTITIES: [] if import_all else include_entities,
+                    CONF_EXCLUDE_DOMAINS: user_input.get(CONF_EXCLUDE_DOMAINS, []),
+                    CONF_EXCLUDE_ENTITIES: user_input.get(CONF_EXCLUDE_ENTITIES, []),
+                    CONF_ENTITY_PREFIX: user_input.get(CONF_ENTITY_PREFIX, ""),
+                    CONF_ENTITY_FRIENDLY_NAME_PREFIX: user_input.get(
+                        CONF_ENTITY_FRIENDLY_NAME_PREFIX, ""
+                    ),
+                }
+                # Import options before setup starts, as for YAML entries.
+                data = {**self._connection_data, CONF_OPTIONS: options}
+                return self.async_create_entry(title=self._remote_title, data=data)
+
+        user_input = user_input or {}
+        domains = sorted(
+            {entity.split(".", 1)[0] for entity in self._remote_entities}
+        )
+        return self.async_show_form(
+            step_id="entity_selection",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_IMPORT_ALL,
+                        default=user_input.get(CONF_IMPORT_ALL, False),
+                    ): bool,
+                    vol.Optional(
+                        CONF_INCLUDE_DOMAINS,
+                        default=user_input.get(CONF_INCLUDE_DOMAINS, []),
+                    ): cv.multi_select(domains),
+                    vol.Optional(
+                        CONF_INCLUDE_ENTITIES,
+                        default=user_input.get(CONF_INCLUDE_ENTITIES, []),
+                    ): cv.multi_select(self._remote_entities),
+                    vol.Optional(
+                        CONF_EXCLUDE_DOMAINS,
+                        default=user_input.get(CONF_EXCLUDE_DOMAINS, []),
+                    ): cv.multi_select(domains),
+                    vol.Optional(
+                        CONF_EXCLUDE_ENTITIES,
+                        default=user_input.get(CONF_EXCLUDE_ENTITIES, []),
+                    ): cv.multi_select(self._remote_entities),
+                    vol.Optional(
+                        CONF_ENTITY_PREFIX,
+                        default=user_input.get(CONF_ENTITY_PREFIX, ""),
+                    ): str,
+                    vol.Optional(
+                        CONF_ENTITY_FRIENDLY_NAME_PREFIX,
+                        default=user_input.get(CONF_ENTITY_FRIENDLY_NAME_PREFIX, ""),
+                    ): str,
                 }
             ),
             errors=errors,
