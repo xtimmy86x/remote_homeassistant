@@ -12,7 +12,6 @@ import fnmatch
 import inspect
 import logging
 import re
-from contextlib import suppress
 
 import aiohttp
 from aiohttp import ClientWebSocketResponse
@@ -293,6 +292,29 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 
 @callback
+def _async_entries_for_remote(hass: HomeAssistant, entry: ConfigEntry):
+    """Find imported registry entries, including those created by older versions."""
+    unique_id_prefix = f"{entry.unique_id[:16]}_"
+    return [
+        entity
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN
+        and entity.unique_id.startswith(unique_id_prefix)
+        and entity.config_entry_id in (None, entry.entry_id)
+    ]
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Remove legacy imported entities when their remote connection is deleted."""
+    if entry.unique_id == REMOTE_ID:
+        return
+
+    registry = er.async_get(hass)
+    for entity in _async_entries_for_remote(hass, entry):
+        registry.async_remove(entity.entity_id)
+
+
+@callback
 def _async_import_options_from_yaml(hass: HomeAssistant, entry: ConfigEntry):
     """Import options from YAML into options section of config entry."""
     if CONF_OPTIONS in entry.data:
@@ -365,6 +387,33 @@ class RemoteConnection:
             entity_id = domain + "." + object_id
             return entity_id
         return entity_id
+
+    @callback
+    def _async_cleanup_entity_registry(self):
+        """Prune stale imports after receiving a complete remote state snapshot."""
+        # Preserve explicitly selected entities even when they are temporarily
+        # absent from the remote state machine.
+        selected_entities = {
+            self._prefixed_entity_id(entity_id)
+            for entity_id in self._whitelist_e
+            if entity_id not in self._blacklist_e
+            and split_entity_id(entity_id)[0] not in self._blacklist_d
+        }
+        unique_id_prefix = f"{self._entry.unique_id[:16]}_"
+        keep_unique_ids = {
+            f"{unique_id_prefix}{entity_id}"
+            for entity_id in self._entities | selected_entities
+        }
+        registry = er.async_get(self._hass)
+        stale = [
+            entity.entity_id
+            for entity in _async_entries_for_remote(self._hass, self._entry)
+            if entity.unique_id not in keep_unique_ids
+        ]
+        for entity_id in stale:
+            registry.async_remove(entity_id)
+        if stale:
+            _LOGGER.info("Removed %s stale remote entity registry entries", len(stale))
 
     def _prefixed_entity_friendly_name(self, entity_friendly_name):
         if (self._entity_friendly_name_prefix
@@ -750,6 +799,7 @@ class RemoteConnection:
                 unique_id=attr['unique_id'],
                 suggested_object_id=object_id,
                 original_name=attr.get("friendly_name"),
+                config_entry=self._entry,
             )
 
             self._entities.add(entity_id)
@@ -767,13 +817,21 @@ class RemoteConnection:
                 data = message["event"]["data"]
                 entity_id = data["entity_id"]
                 if not data["new_state"]:
+                    self._all_entity_names.discard(entity_id)
                     entity_id = self._prefixed_entity_id(entity_id)
                     # entity was removed in the remote instance
-                    with suppress(ValueError, AttributeError, KeyError):
-                        self._entities.remove(entity_id)
-                    with suppress(ValueError, AttributeError, KeyError):
-                        self._all_entity_names.remove(entity_id)
+                    self._entities.discard(entity_id)
                     self._hass.states.async_remove(entity_id)
+                    registry = er.async_get(self._hass)
+                    domain, _ = split_entity_id(entity_id)
+                    unique_id = f"{self._entry.unique_id[:16]}_{entity_id}"
+                    registered_id = registry.async_get_entity_id(
+                        domain, DOMAIN, unique_id
+                    )
+                    if registered_id:
+                        registered = registry.async_get(registered_id)
+                        if registered.config_entry_id in (None, self._entry.entry_id):
+                            registry.async_remove(registered_id)
                     return
 
                 state = data["new_state"]["state"]
@@ -794,6 +852,10 @@ class RemoteConnection:
 
         def got_states(message):
             """Called when list of remote states is available."""
+            if not message.get("success") or not isinstance(message.get("result"), list):
+                _LOGGER.warning("Could not read remote states; skipping registry cleanup")
+                return
+
             for entity in message["result"]:
                 entity_id = entity["entity_id"]
                 state = entity["state"]
@@ -805,6 +867,8 @@ class RemoteConnection:
                         attributes[attr] = self._full_picture_url(value)
 
                 state_changed(entity_id, state, attributes)
+
+            self._async_cleanup_entity_registry()
 
         self._remove_listener = self._hass.bus.async_listen(
             EVENT_CALL_SERVICE, forward_event
