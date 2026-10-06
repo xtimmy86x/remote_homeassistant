@@ -731,14 +731,6 @@ class RemoteConnection:
             # Add local unique id
             domain, object_id = split_entity_id(entity_id)
             attr['unique_id'] = f"{self._entry.unique_id[:16]}_{entity_id}"
-            entity_registry = er.async_get(self._hass)
-            entity_registry.async_get_or_create(
-                domain=domain,
-                platform='remote_homeassistant',
-                unique_id=attr['unique_id'],
-                suggested_object_id=object_id,
-            )
-
             # Add local customization data
             if DATA_CUSTOMIZE in self._hass.data:
                 attr.update(self._hass.data[DATA_CUSTOMIZE].get(entity_id))
@@ -748,6 +740,17 @@ class RemoteConnection:
                     attr[attrId] = self._prefixed_entity_friendly_name(value)
                 if attrId == "entity_picture":
                     attr[attrId] = self._full_picture_url(value)
+
+            # Keep the registry name in sync with the published state.
+            # The more-info title reads the registry's original_name.
+            entity_registry = er.async_get(self._hass)
+            entity_registry.async_get_or_create(
+                domain=domain,
+                platform='remote_homeassistant',
+                unique_id=attr['unique_id'],
+                suggested_object_id=object_id,
+                original_name=attr.get("friendly_name"),
+            )
 
             self._entities.add(entity_id)
             self._hass.states.async_set(entity_id, state, attr)
