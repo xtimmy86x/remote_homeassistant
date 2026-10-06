@@ -87,6 +87,11 @@ Check "Secure" if you want to connect via a secure (https/wss) connection
 Click "Submit" to proceed to the next step.
 
 6. You can also change the filters to include/exclude specified entities or domains from the remote instance.
+   After the next successful state synchronization, entities no longer imported
+   are removed from the entity registry, including entries left by older
+   versions of this integration. Temporary connection loss keeps the registry
+   entries. Removing a remote connection also removes its remaining imported
+   entries. Recorder history is not deleted.
 
 <img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/step2.png" height="200"/>
 
