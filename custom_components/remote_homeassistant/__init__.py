@@ -35,6 +35,7 @@ from homeassistant.core import (Context, EventOrigin, HomeAssistant, callback,
                                 split_entity_id)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.reload import async_integration_yaml_config
@@ -59,6 +60,7 @@ from .const import (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES,
                     CONF_SERVICE_PREFIX, CONF_SERVICES, CONF_UNSUB_LISTENER,
                     DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN)
 from .proxy_services import ProxyServices
+from .remote_registry import RemoteRegistrySync
 from .rest_api import UnsupportedVersion, async_get_discovery_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -148,7 +150,17 @@ CONFIG_SCHEMA = vol.Schema(
 HEARTBEAT_INTERVAL = 20
 HEARTBEAT_TIMEOUT = 5
 
-INTERNALLY_USED_EVENTS = [EVENT_STATE_CHANGED]
+REGISTRY_EVENTS = {
+    ar.EVENT_AREA_REGISTRY_UPDATED,
+    dr.EVENT_DEVICE_REGISTRY_UPDATED,
+    er.EVENT_ENTITY_REGISTRY_UPDATED,
+}
+INTERNALLY_USED_EVENTS = [EVENT_STATE_CHANGED, *REGISTRY_EVENTS]
+REGISTRY_COMMANDS = (
+    "config/entity_registry/list",
+    "config/device_registry/list",
+    "config/area_registry/list",
+)
 
 
 def async_yaml_to_config_entry(instance_conf):
@@ -314,13 +326,14 @@ def _async_entries_for_remote(hass: HomeAssistant, entry: ConfigEntry):
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Remove legacy imported entities when their remote connection is deleted."""
+    """Remove imported registry objects when their remote connection is deleted."""
     if entry.unique_id == REMOTE_ID:
         return
 
     registry = er.async_get(hass)
     for entity in _async_entries_for_remote(hass, entry):
         registry.async_remove(entity.entity_id)
+    await RemoteRegistrySync(hass, entry, lambda entity_id: entity_id).async_remove()
 
 
 @callback
@@ -384,6 +397,11 @@ class RemoteConnection:
         self._remote_imports = set()
         self._handlers = {}
         self._remove_listener = None
+        self._registry_sync = RemoteRegistrySync(hass, config_entry, self._prefixed_entity_id)
+        self._registry_snapshots = {}
+        self._registry_generation = 0
+        self._snapshot_complete = False
+        self._registry_refresh_task = None
         self.proxy_services = ProxyServices(hass, config_entry, self)
 
         self.set_connection_state(STATE_CONNECTING)
@@ -397,6 +415,46 @@ class RemoteConnection:
             entity_id = domain + "." + object_id
             return entity_id
         return entity_id
+
+    async def _async_request_registry_snapshots(self):
+        """Fetch the source registry data after connection or a remote change."""
+        self._registry_generation += 1
+        generation = self._registry_generation
+        self._registry_snapshots = {}
+        for command in REGISTRY_COMMANDS:
+            async def got_registry(message, command=command):
+                self._handlers.pop(message.get("id"), None)
+                if generation != self._registry_generation:
+                    return
+                if not message.get("success") or not isinstance(message.get("result"), list):
+                    _LOGGER.warning("Could not read remote registry %s", command)
+                    return
+                self._registry_snapshots[command] = message["result"]
+                await self._async_sync_registry_if_ready()
+
+            await self.call(got_registry, command)
+
+    async def _async_sync_registry_if_ready(self):
+        """Apply metadata only after a successful full state snapshot."""
+        if not self._snapshot_complete or len(self._registry_snapshots) != len(REGISTRY_COMMANDS):
+            return
+        try:
+            await self._registry_sync.async_sync(
+                *(self._registry_snapshots[command] for command in REGISTRY_COMMANDS),
+                active_ids={
+                    entity_id
+                    for entity_id in self._all_entity_names
+                    if self._prefixed_entity_id(entity_id) in self._entities
+                },
+            )
+        except Exception:
+            # Optional registry metadata must not interrupt state synchronization.
+            _LOGGER.exception("Could not mirror remote device and area metadata")
+
+    async def _async_debounced_registry_refresh(self):
+        """Coalesce bursts of registry changes on the remote instance."""
+        await asyncio.sleep(1)
+        await self._async_request_registry_snapshots()
 
     @callback
     def _async_cleanup_entity_registry(self):
@@ -630,6 +688,12 @@ class RemoteConnection:
         self._entities = set()
         self._all_entity_names = set()
         self._remote_imports = set()
+        self._snapshot_complete = False
+        self._registry_snapshots = {}
+        self._registry_generation += 1
+        if self._registry_refresh_task is not None:
+            self._registry_refresh_task.cancel()
+            self._registry_refresh_task = None
         if not self._is_stopping:
             asyncio.ensure_future(self.async_connect())
 
@@ -703,6 +767,10 @@ class RemoteConnection:
         await self._disconnected()
 
     async def _init(self):
+        await self._registry_sync.async_load()
+        self._snapshot_complete = False
+        self._registry_snapshots = {}
+
         async def forward_event(event):
             """Send local event to remote instance.
 
@@ -868,6 +936,13 @@ class RemoteConnection:
             if message["type"] != "event":
                 return
 
+            if message["event"]["event_type"] in REGISTRY_EVENTS:
+                if self._registry_refresh_task is None or self._registry_refresh_task.done():
+                    self._registry_refresh_task = self._hass.async_create_task(
+                        self._async_debounced_registry_refresh()
+                    )
+                return
+
             if message["event"]["event_type"] == "state_changed":
                 data = message["event"]["data"]
                 entity_id = data["entity_id"]
@@ -913,6 +988,8 @@ class RemoteConnection:
                 state_changed(entity_id, state, attributes)
 
             self._async_cleanup_entity_registry()
+            self._snapshot_complete = True
+            self._hass.async_create_task(self._async_sync_registry_if_ready())
 
         self._remove_listener = self._hass.bus.async_listen(
             EVENT_CALL_SERVICE, forward_event
@@ -922,5 +999,7 @@ class RemoteConnection:
             await self.call(fire_event, "subscribe_events", event_type=event)
 
         await self.call(got_states, "get_states")
+
+        await self._async_request_registry_snapshots()
 
         await self.proxy_services.load()

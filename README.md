@@ -38,6 +38,16 @@ connection are forwarded, with any configured entity ID prefix removed. This
 also applies to `entity_id: all`. Other targeted entities remain on the main
 instance.
 
+Imported entities are linked to copies of their source devices and areas.
+Only devices used by imported entities (and their parent devices) are copied.
+Area names include the remote connection name, for example `Second Home: Kitchen`,
+so they do not silently merge with local areas. Remote registry changes are
+refreshed automatically. A locally renamed copied area keeps its chosen name.
+Unused copied devices and unchanged, empty copied areas are removed after a
+successful synchronization or when the remote connection is deleted. An area
+containing other local entities or devices is kept. Floors and labels are not
+copied.
+
 When the connection to the remote instance is lost, all previously published states are removed again from the local state registry.
 
 A possible use case for this is to be able to use different Z-Wave networks, on different Z-Wave sticks (with the second one possible running on another computer in a different location).
