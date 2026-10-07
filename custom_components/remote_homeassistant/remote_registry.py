@@ -38,7 +38,7 @@ class RemoteRegistrySync:
         prefix = f"{self.entry.unique_id}_"
         return [
             device
-            for device in device_registry.devices.values()
+            for device in device_registry.devices
             if any(
                 domain == DOMAIN and identifier.startswith(prefix)
                 for domain, identifier in device.identifiers
@@ -66,7 +66,7 @@ class RemoteRegistrySync:
                 continue
             if any(entity.area_id == area.id for entity in entity_registry.entities.values()):
                 continue
-            if any(device.area_id == area.id for device in device_registry.devices.values()):
+            if any(device.area_id == area.id for device in device_registry.devices):
                 continue
             area_registry.async_delete(area.id)
             del self.area_ids[source_id]
