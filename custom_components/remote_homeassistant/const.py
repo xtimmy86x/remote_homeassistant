@@ -26,6 +26,8 @@ CONF_MAIN = "Add a remote node"
 CONF_REMOTE = "Setup as remote node"
 
 DOMAIN = "remote_homeassistant"
+# State attributes survive the Home Assistant state WebSocket API.
+ATTR_REMOTE_ORIGIN = "remote_homeassistant_origin"
 
 REMOTE_ID = "remote"
 
