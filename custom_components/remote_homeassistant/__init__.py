@@ -30,7 +30,7 @@ from homeassistant.const import (CONF_ABOVE, CONF_ACCESS_TOKEN, CONF_BELOW,
                                  CONF_PORT, CONF_UNIT_OF_MEASUREMENT,
                                  CONF_VERIFY_SSL, EVENT_CALL_SERVICE,
                                  EVENT_HOMEASSISTANT_STOP, EVENT_STATE_CHANGED,
-                                 SERVICE_RELOAD)
+                                 SERVICE_RELOAD, ENTITY_MATCH_ALL)
 from homeassistant.core import (Context, EventOrigin, HomeAssistant, callback,
                                 split_entity_id)
 from homeassistant.helpers import device_registry as dr
@@ -39,6 +39,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.reload import async_integration_yaml_config
 from homeassistant.helpers.service import async_register_admin_service
+try:
+    from homeassistant.helpers import target as target_helpers
+except ImportError:
+    # Home Assistant versions before the target helpers were moved out of service.
+    target_helpers = None
+    from homeassistant.core import ServiceCall
+    from homeassistant.helpers.service import (
+        async_extract_referenced_entity_ids as legacy_extract_target,
+    )
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.setup import async_setup_component
 
@@ -697,26 +706,40 @@ class RemoteConnection:
         async def forward_event(event):
             """Send local event to remote instance.
 
-            The affected entity_id has to originate from that remote instance,
-            otherwise the event is discarded.
+            Resolve local targets and forward only entities from this connection.
             """
             event_data = event.data
-            service_data = event_data["service_data"]
+            service_data = event_data.get("service_data", {})
 
             if not service_data:
                 return
 
-            entity_ids = service_data.get("entity_id", None)
-
-            if not entity_ids:
+            selectors = ("entity_id", "device_id", "area_id", "floor_id", "label_id")
+            if not any(service_data.get(selector) for selector in selectors):
                 return
 
-            if isinstance(entity_ids, str):
-                entity_ids = (entity_ids.lower(),)
+            entity_target = service_data.get("entity_id", [])
+            if entity_target == ENTITY_MATCH_ALL or (
+                isinstance(entity_target, list) and ENTITY_MATCH_ALL in entity_target
+            ):
+                entity_ids = self._entities
+            elif target_helpers is None:
+                call = ServiceCall(
+                    event_data["domain"], event_data["service"], service_data
+                )
+                referenced = legacy_extract_target(self._hass, call)
+                entity_ids = referenced.referenced | referenced.indirectly_referenced
+            else:
+                selection = target_helpers.TargetSelection(service_data)
+                referenced = target_helpers.async_extract_referenced_entity_ids(
+                    self._hass, selection
+                )
+                entity_ids = referenced.referenced | referenced.indirectly_referenced
 
             entities = {entity_id.lower() for entity_id in self._entities}
-
-            entity_ids = entities.intersection(entity_ids)
+            entity_ids = entities.intersection(
+                entity_id.lower() for entity_id in entity_ids
+            )
 
             if not entity_ids:
                 return
@@ -725,13 +748,16 @@ class RemoteConnection:
 
                 def _remove_prefix(entity_id):
                     domain, object_id = split_entity_id(entity_id)
-                    object_id = object_id.replace(self._entity_prefix.lower(), "", 1)
+                    object_id = object_id.removeprefix(self._entity_prefix.lower())
                     return domain + "." + object_id
 
                 entity_ids = {_remove_prefix(entity_id) for entity_id in entity_ids}
 
             event_data = copy.deepcopy(event_data)
-            event_data["service_data"]["entity_id"] = list(entity_ids)
+            forwarded_data = event_data["service_data"]
+            for selector in selectors:
+                forwarded_data.pop(selector, None)
+            forwarded_data["entity_id"] = sorted(entity_ids)
 
             # Remove service_call_id parameter - websocket API
             # doesn't accept that one

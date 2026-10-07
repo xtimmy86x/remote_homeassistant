@@ -31,6 +31,13 @@ sync; temporary connection loss does not trigger cleanup.
 
 The component keeps track which objects originate from which instance. Whenever a service is called on an object, the call gets forwarded to the particular remote instance.
 
+Service calls with Home Assistant targets also work for imported entities.
+An `entity_id`, `device_id`, `area_id`, `floor_id`, or `label_id` target is
+resolved on the main instance; only entities imported from the remote
+connection are forwarded, with any configured entity ID prefix removed. This
+also applies to `entity_id: all`. Other targeted entities remain on the main
+instance.
+
 When the connection to the remote instance is lost, all previously published states are removed again from the local state registry.
 
 A possible use case for this is to be able to use different Z-Wave networks, on different Z-Wave sticks (with the second one possible running on another computer in a different location).
