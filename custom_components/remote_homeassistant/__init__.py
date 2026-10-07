@@ -63,6 +63,8 @@ CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_ENTITY_FRIENDLY_NAME_PREFIX = "entity_friendly_name_prefix"
 CONF_FILTER = "filter"
 CONF_MAX_MSG_SIZE = "max_message_size"
+# Preserved by Home Assistant's state WebSocket API across instances.
+ATTR_REMOTE_ORIGIN = "remote_homeassistant_origin"
 
 STATE_INIT = "initializing"
 STATE_CONNECTING = "connecting"
@@ -372,6 +374,7 @@ class RemoteConnection:
         self._is_stopping = False
         self._entities = set()
         self._all_entity_names = set()
+        self._remote_imports = set()
         self._handlers = {}
         self._remove_listener = None
         self.proxy_services = ProxyServices(hass, config_entry, self)
@@ -398,6 +401,7 @@ class RemoteConnection:
             for entity_id in self._whitelist_e
             if entity_id not in self._blacklist_e
             and split_entity_id(entity_id)[0] not in self._blacklist_d
+            and entity_id not in self._remote_imports
         }
         unique_id_prefix = f"{self._entry.unique_id[:16]}_"
         keep_unique_ids = {
@@ -414,6 +418,23 @@ class RemoteConnection:
             registry.async_remove(entity_id)
         if stale:
             _LOGGER.info("Removed %s stale remote entity registry entries", len(stale))
+
+    @callback
+    def _async_remove_imported_entity(self, source_entity_id):
+        """Remove a previously mirrored state and its matching registry entry."""
+        entity_id = self._prefixed_entity_id(source_entity_id)
+        if entity_id in self._entities:
+            self._entities.discard(entity_id)
+            self._hass.states.async_remove(entity_id)
+
+        registry = er.async_get(self._hass)
+        domain, _ = split_entity_id(entity_id)
+        unique_id = f"{self._entry.unique_id[:16]}_{entity_id}"
+        registered_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+        if registered_id:
+            registered = registry.async_get(registered_id)
+            if registered.config_entry_id in (None, self._entry.entry_id):
+                registry.async_remove(registered_id)
 
     def _prefixed_entity_friendly_name(self, entity_friendly_name):
         if (self._entity_friendly_name_prefix
@@ -601,6 +622,7 @@ class RemoteConnection:
         self._remove_listener = None
         self._entities = set()
         self._all_entity_names = set()
+        self._remote_imports = set()
         if not self._is_stopping:
             asyncio.ensure_future(self.async_connect())
 
@@ -735,6 +757,13 @@ class RemoteConnection:
             """Publish remote state change on local instance."""
             domain, _object_id = split_entity_id(entity_id)
 
+            if attr.get(ATTR_REMOTE_ORIGIN):
+                self._remote_imports.add(entity_id)
+                self._all_entity_names.discard(entity_id)
+                self._async_remove_imported_entity(entity_id)
+                return
+
+            self._remote_imports.discard(entity_id)
             self._all_entity_names.add(entity_id)
 
             if entity_id in self._blacklist_e or domain in self._blacklist_d:
@@ -784,6 +813,8 @@ class RemoteConnection:
             if DATA_CUSTOMIZE in self._hass.data:
                 attr.update(self._hass.data[DATA_CUSTOMIZE].get(entity_id))
 
+            attr[ATTR_REMOTE_ORIGIN] = self._entry.unique_id
+
             for attrId, value in attr.items():
                 if attrId == "friendly_name":
                     attr[attrId] = self._prefixed_entity_friendly_name(value)
@@ -818,20 +849,9 @@ class RemoteConnection:
                 entity_id = data["entity_id"]
                 if not data["new_state"]:
                     self._all_entity_names.discard(entity_id)
-                    entity_id = self._prefixed_entity_id(entity_id)
+                    self._remote_imports.discard(entity_id)
                     # entity was removed in the remote instance
-                    self._entities.discard(entity_id)
-                    self._hass.states.async_remove(entity_id)
-                    registry = er.async_get(self._hass)
-                    domain, _ = split_entity_id(entity_id)
-                    unique_id = f"{self._entry.unique_id[:16]}_{entity_id}"
-                    registered_id = registry.async_get_entity_id(
-                        domain, DOMAIN, unique_id
-                    )
-                    if registered_id:
-                        registered = registry.async_get(registered_id)
-                        if registered.config_entry_id in (None, self._entry.entry_id):
-                            registry.async_remove(registered_id)
+                    self._async_remove_imported_entity(entity_id)
                     return
 
                 state = data["new_state"]["state"]

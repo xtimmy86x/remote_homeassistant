@@ -22,6 +22,13 @@ The entity ids can optionally be prefixed via the `entity_prefix` parameter.
 
 The entity friendly names can optionally be prefixed via the `entity_friendly_name_prefix` parameter.
 
+Imported states carry a `remote_homeassistant_origin` attribute. If two instances
+connect to each other, states already imported by this integration are skipped
+instead of being imported again. Install the updated integration on both
+instances for the protection to work in both directions. Existing looped
+entities are removed from the registry after the next successful full state
+sync; temporary connection loss does not trigger cleanup.
+
 The component keeps track which objects originate from which instance. Whenever a service is called on an object, the call gets forwarded to the particular remote instance.
 
 When the connection to the remote instance is lost, all previously published states are removed again from the local state registry.
