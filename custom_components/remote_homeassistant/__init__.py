@@ -390,12 +390,17 @@ class RemoteConnection:
             CONF_ENTITY_FRIENDLY_NAME_PREFIX, "")
 
         self._connection : Optional[ClientWebSocketResponse] = None
+        self._connect_task = None
+        self._receive_task = None
         self._heartbeat_task = None
+        self._stop_listener = None
         self._is_stopping = False
+        self._auth_error_state = None
         self._entities = set()
         self._all_entity_names = set()
         self._remote_imports = set()
         self._handlers = {}
+        self._subscription_ids = set()
         self._remove_listener = None
         self._registry_sync = RemoteRegistrySync(hass, config_entry, self._prefixed_entity_id)
         self._registry_snapshots = {}
@@ -542,6 +547,15 @@ class RemoteConnection:
     async def async_connect(self):
         """Connect to remote home-assistant websocket..."""
 
+        if self._is_stopping:
+            return
+        connect_task = asyncio.current_task()
+        if (self._connect_task is not None
+                and self._connect_task is not connect_task
+                and not self._connect_task.done()):
+            return
+        self._connect_task = connect_task
+
         async def _async_stop_handler(event):
             """Stop when Home Assistant is shutting down."""
             await self.async_stop()
@@ -584,45 +598,61 @@ class RemoteConnection:
         session = async_get_clientsession(self._hass, self._verify_ssl)
         self.set_connection_state(STATE_CONNECTING)
 
-        while True:
-            info = await _async_instance_get_info()
+        try:
+            while not self._is_stopping:
+                info = await _async_instance_get_info()
 
-            # Verify we are talking to correct instance
-            if not _async_instance_id_match(info):
-                self.set_connection_state(STATE_RECONNECTING)
-                await asyncio.sleep(10)
-                continue
+                # Verify we are talking to correct instance
+                if not _async_instance_id_match(info):
+                    self.set_connection_state(STATE_RECONNECTING)
+                    await asyncio.sleep(10)
+                    continue
 
-            try:
-                _LOGGER.info("Connecting to %s", url)
-                self._connection = await session.ws_connect(url, max_msg_size = self._max_msg_size)
-            except aiohttp.client_exceptions.ClientError:
-                _LOGGER.error("Could not connect to %s, retry in 10 seconds...", url)
-                self.set_connection_state(STATE_RECONNECTING)
-                await asyncio.sleep(10)
-            else:
+                try:
+                    _LOGGER.info("Connecting to %s", url)
+                    connection = await session.ws_connect(
+                        url, max_msg_size=self._max_msg_size
+                    )
+                except aiohttp.client_exceptions.ClientError:
+                    _LOGGER.error("Could not connect to %s, retry in 10 seconds...", url)
+                    self.set_connection_state(STATE_RECONNECTING)
+                    await asyncio.sleep(10)
+                    continue
+
+                if self._is_stopping:
+                    await connection.close()
+                    return
+                self._connection = connection
                 _LOGGER.info("Connected to home-assistant websocket at %s", url)
-                break
+                self._stop_listener = self._hass.bus.async_listen_once(
+                    EVENT_HOMEASSISTANT_STOP, _async_stop_handler
+                )
 
-        self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_stop_handler)
+                device_registry = dr.async_get(self._hass)
+                device_registry.async_get_or_create(
+                    config_entry_id=self._entry.entry_id,
+                    identifiers={(DOMAIN, f"remote_{self._entry.unique_id}")},
+                    name=info.get("location_name"),
+                    manufacturer="Home Assistant",
+                    model=info.get("installation_type"),
+                    sw_version=info.get("ha_version"),
+                )
 
-        device_registry = dr.async_get(self._hass)
-        device_registry.async_get_or_create(
-            config_entry_id=self._entry.entry_id,
-            identifiers={(DOMAIN, f"remote_{self._entry.unique_id}")},
-            name=info.get("location_name"),
-            manufacturer="Home Assistant",
-            model=info.get("installation_type"),
-            sw_version=info.get("ha_version"),
-        )
+                self._receive_task = self._hass.async_create_task(self._recv(connection))
+                self._heartbeat_task = self._hass.async_create_task(
+                    self._heartbeat_loop(connection)
+                )
+                return
+        finally:
+            if self._connect_task is connect_task:
+                self._connect_task = None
 
-        asyncio.ensure_future(self._recv())
-        self._heartbeat_task = self._hass.loop.create_task(self._heartbeat_loop())
-
-    async def _heartbeat_loop(self):
+    async def _heartbeat_loop(self, connection):
         """Send periodic heartbeats to remote instance."""
-        while self._connection is not None and not self._connection.closed:
+        while self._connection is connection and not connection.closed:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
+            if self._connection is not connection or connection.closed:
+                break
 
             _LOGGER.debug("Sending ping")
             event = asyncio.Event()
@@ -632,6 +662,8 @@ class RemoteConnection:
                 event.set()
 
             await self.call(resp, "ping")
+            if self._connection is not connection:
+                break
 
             try:
                 await asyncio.wait_for(event.wait(), HEARTBEAT_TIMEOUT)
@@ -639,14 +671,31 @@ class RemoteConnection:
                 _LOGGER.warning("heartbeat failed")
 
                 # Schedule closing on event loop to avoid deadlock
-                asyncio.ensure_future(self._connection.close())
+                self._hass.async_create_task(connection.close())
                 break
 
     async def async_stop(self):
         """Close connection."""
         self._is_stopping = True
-        if self._connection is not None:
-            await self._connection.close()
+        connect_task = self._connect_task
+        if connect_task is not None and connect_task is not asyncio.current_task():
+            connect_task.cancel()
+            try:
+                await connect_task
+            except asyncio.CancelledError:
+                pass
+        connection = self._connection
+        if connection is not None:
+            await connection.close()
+        receive_task = self._receive_task
+        if receive_task is not None and receive_task is not asyncio.current_task():
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _LOGGER.exception("Remote receiver failed during shutdown")
+        await self._disconnected(connection)
         await self.proxy_services.unload()
 
     def _next_id(self):
@@ -655,25 +704,33 @@ class RemoteConnection:
         return _id
 
     async def call(self, handler, message_type, **extra_args) -> None:
-        if self._connection is None:
+        connection = self._connection
+        if connection is None:
             _LOGGER.error("No remote websocket connection")
             return
 
         _id = self._next_id()
         self._handlers[_id] = handler
+        if message_type == "subscribe_events":
+            self._subscription_ids.add(_id)
         try:
-            await self._connection.send_json(
+            await connection.send_json(
                 {"id": _id, "type": message_type, **extra_args}
             )
         except aiohttp.client_exceptions.ClientError as err:
             _LOGGER.error("remote websocket connection closed: %s", err)
-            await self._disconnected()
+            await self._disconnected(connection)
 
-    async def _disconnected(self):
+    async def _disconnected(self, connection):
+        if connection is not None and self._connection is not connection:
+            return
+        self._connection = None
+        if connection is not None and not connection.closed:
+            await connection.close()
         # Remove all published entries
         for entity in self._entities:
             self._hass.states.async_remove(entity)
-        if self._heartbeat_task is not None:
+        if self._heartbeat_task is not None and self._heartbeat_task is not asyncio.current_task():
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
@@ -681,10 +738,16 @@ class RemoteConnection:
                 pass
         if self._remove_listener is not None:
             self._remove_listener()
+        if self._stop_listener is not None:
+            self._stop_listener()
 
-        self.set_connection_state(STATE_DISCONNECTED)
+        self.set_connection_state(self._auth_error_state or STATE_DISCONNECTED)
         self._heartbeat_task = None
+        self._receive_task = None
         self._remove_listener = None
+        self._stop_listener = None
+        self._handlers.clear()
+        self._subscription_ids.clear()
         self._entities = set()
         self._all_entity_names = set()
         self._remote_imports = set()
@@ -694,13 +757,21 @@ class RemoteConnection:
         if self._registry_refresh_task is not None:
             self._registry_refresh_task.cancel()
             self._registry_refresh_task = None
-        if not self._is_stopping:
-            asyncio.ensure_future(self.async_connect())
+        if not self._is_stopping and self._auth_error_state is None and (
+            self._connect_task is None or self._connect_task.done()
+        ):
+            self._connect_task = self._hass.async_create_task(self.async_connect())
 
-    async def _recv(self):
-        while self._connection is not None and not self._connection.closed:
+    async def _recv(self, connection):
+        try:
+            await self._recv_messages(connection)
+        finally:
+            await self._disconnected(connection)
+
+    async def _recv_messages(self, connection):
+        while self._connection is connection and not connection.closed:
             try:
-                data = await self._connection.receive()
+                data = await connection.receive()
             except aiohttp.client_exceptions.ClientError as err:
                 _LOGGER.error("remote websocket connection closed: %s", err)
                 break
@@ -742,7 +813,8 @@ class RemoteConnection:
                     json_data = {"type": api.TYPE_AUTH, "access_token": self._access_token}
                 else:
                     _LOGGER.error("Access token required, but not provided")
-                    self.set_connection_state(STATE_AUTH_REQUIRED)
+                    self._auth_error_state = STATE_AUTH_REQUIRED
+                    await connection.close()
                     return
                 try:
                     await self._connection.send_json(json_data)
@@ -752,19 +824,22 @@ class RemoteConnection:
 
             elif message["type"] == api.TYPE_AUTH_INVALID:
                 _LOGGER.error("Auth invalid, check your access token")
-                self.set_connection_state(STATE_AUTH_INVALID)
-                await self._connection.close()
+                self._auth_error_state = STATE_AUTH_INVALID
+                await connection.close()
                 return
 
             else:
-                handler = self._handlers.get(message["id"])
+                message_id = message.get("id")
+                handler = (
+                    self._handlers.get(message_id)
+                    if message_id in self._subscription_ids
+                    else self._handlers.pop(message_id, None)
+                )
                 if handler is not None:
                     if inspect.iscoroutinefunction(handler):
                         await handler(message)
                     else:
                         handler(message)
-
-        await self._disconnected()
 
     async def _init(self):
         await self._registry_sync.async_load()
@@ -836,14 +911,15 @@ class RemoteConnection:
 
             _LOGGER.debug("forward event: %s", data)
             
-            if self._connection is None:
+            connection = self._connection
+            if connection is None:
                 _LOGGER.error("There is no remote connecion to send send data to")
                 return
             try:
-                await self._connection.send_json(data)
+                await connection.send_json(data)
             except Exception as err:
                 _LOGGER.error("could not send data to remote connection: %s", err)
-                await self._disconnected()
+                await self._disconnected(connection)
 
         def state_changed(entity_id, state, attr):
             """Publish remote state change on local instance."""
