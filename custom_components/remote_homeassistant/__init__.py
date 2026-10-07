@@ -48,7 +48,7 @@ from .const import (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES,
                     CONF_INCLUDE_DOMAINS, CONF_INCLUDE_ENTITIES,
                     CONF_LOAD_COMPONENTS, CONF_OPTIONS, CONF_REMOTE_CONNECTION,
                     CONF_SERVICE_PREFIX, CONF_SERVICES, CONF_UNSUB_LISTENER,
-                    DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE)
+                    DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN)
 from .proxy_services import ProxyServices
 from .rest_api import UnsupportedVersion, async_get_discovery_info
 
@@ -63,8 +63,6 @@ CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_ENTITY_FRIENDLY_NAME_PREFIX = "entity_friendly_name_prefix"
 CONF_FILTER = "filter"
 CONF_MAX_MSG_SIZE = "max_message_size"
-# Preserved by Home Assistant's state WebSocket API across instances.
-ATTR_REMOTE_ORIGIN = "remote_homeassistant_origin"
 
 STATE_INIT = "initializing"
 STATE_CONNECTING = "connecting"

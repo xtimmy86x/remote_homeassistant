@@ -10,9 +10,44 @@ from custom_components.remote_homeassistant import (
     ATTR_REMOTE_ORIGIN,
     RemoteConnection,
 )
+from custom_components.remote_homeassistant.rest_api import async_get_remote_entity_ids
 
 
 UUID = "1234567890abcdef1234567890abcdef"
+
+
+@pytest.mark.asyncio
+async def test_initial_entity_picker_omits_imports(hass, monkeypatch):
+    """The first setup screen only offers native remote entity IDs."""
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def json(self):
+            return [
+                {"entity_id": "sensor.native", "attributes": {}},
+                {"entity_id": "sensor.imported", "attributes": {
+                    ATTR_REMOTE_ORIGIN: UUID,
+                }},
+            ]
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(
+        "custom_components.remote_homeassistant.rest_api.async_get_clientsession",
+        lambda *_args: Session(),
+    )
+    entities = await async_get_remote_entity_ids(
+        hass, "remote.invalid", 8123, False, "token", True
+    )
+    assert entities == ["sensor.native"]
 
 
 def make_entry(hass, *, unique_id=UUID, options=None):

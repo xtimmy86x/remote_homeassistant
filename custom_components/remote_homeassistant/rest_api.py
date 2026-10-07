@@ -4,6 +4,8 @@ import aiohttp
 from homeassistant import exceptions
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .const import ATTR_REMOTE_ORIGIN
+
 API_URL = "{proto}://{host}:{port}/api/remote_homeassistant/discovery"
 STATES_URL = "{proto}://{host}:{port}/api/states"
 
@@ -91,4 +93,9 @@ async def async_get_remote_entity_ids(
     ):
         raise BadResponse("Invalid states response")
 
-    return sorted({state["entity_id"] for state in states})
+    return sorted({
+        state["entity_id"]
+        for state in states
+        if not isinstance(state.get("attributes"), dict)
+        or not state["attributes"].get(ATTR_REMOTE_ORIGIN)
+    })
