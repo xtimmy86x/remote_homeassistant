@@ -64,10 +64,9 @@
       },
       "events": {
         "title": "Eventos inscritos (passo 4/4)",
-        "description": "Adicione um novo evento inscrito digitando seu nome em `Adicionar novo evento` e pressione `Enviar`. Remova os eventos existentes desmarcando-os em `Eventos`.\n\nDeixe `Adicionar novo evento` e pressione `Enviar` para não fazer mais alterações.",
+        "description": "Pesquise eventos existentes ou digite um novo nome em Eventos. Para remover um evento, retire-o da seleção e pressione Enviar.",
         "data": {
-          "subscribe_events": "Eventos",
-          "add_new_event": "Adicionar novo evento"
+          "subscribe_events": "Eventos"
         }
       }
     }

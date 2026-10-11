@@ -87,10 +87,9 @@
       },
       "events": {
         "title": "Subscribed events (step 4/4)",
-        "description": "Add a new subscribed event by entering its name in `Add new event` and press `Submit`. Remove existing events by unticking them in `Events`.\n\nLeave `Add new event` and press `Submit` to make no further changes.",
+        "description": "Search for existing events or type a new event name in Events. Remove a selected event using its chip, then submit to save.",
         "data": {
-          "subscribe_events": "Events",
-          "add_new_event": "Add new event"
+          "subscribe_events": "Events"
         }
       }
     },
