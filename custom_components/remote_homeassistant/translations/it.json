@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "reauth_confirm": {
+        "title": "Aggiorna il token di accesso remoto",
+        "description": "L'istanza remota ha rifiutato il token salvato. Crea un nuovo token di accesso permanente su quella istanza e inseriscilo qui.",
+        "data": {
+          "access_token": "Nuovo token di accesso"
+        }
+      }
+    },
+    "abort": {
+      "reauth_successful": "Riautenticazione riuscita. La connessione remota usa il nuovo token.",
+      "wrong_instance": "Il token appartiene a un'altra istanza remota di Home Assistant."
+    }
+  }
+}

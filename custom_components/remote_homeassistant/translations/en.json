@@ -49,6 +49,7 @@
     },
     "abort": {
       "already_configured": "Already configured",
+      "reauth_successful": "Reauthentication successful. The remote connection is using the new token.",
       "wrong_instance": "The token belongs to a different remote Home Assistant instance."
     }
   },
