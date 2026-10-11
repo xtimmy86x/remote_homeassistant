@@ -165,6 +165,7 @@ async def test_disconnect_retries_once_and_stop_cancels_it(
 
     assert attempts == 2
     assert remote._connection is None
+    assert remote._last_error == "connection_lost"
     assert remote._handlers == {}
     assert remote._handler_timeouts == {}
     assert remote._stop_listener is None
@@ -326,6 +327,7 @@ async def test_invalid_auth_keeps_error_state_without_retry(
     await hass.async_block_till_done()
 
     assert states[-1] == STATE_AUTH_INVALID
+    assert remote._last_error == STATE_AUTH_INVALID
     assert remote._connection is None
     assert remote._connect_task is None
     get_info.assert_awaited_once()

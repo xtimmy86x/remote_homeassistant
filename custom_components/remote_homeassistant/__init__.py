@@ -397,6 +397,9 @@ class RemoteConnection:
         self._stop_listener = None
         self._is_stopping = False
         self._auth_error_state = None
+        self._connection_state = STATE_INIT
+        self._last_error = None
+        self._connection_error = False
         self._entities = set()
         self._all_entity_names = set()
         self._remote_imports = set()
@@ -534,8 +537,15 @@ class RemoteConnection:
  
     def set_connection_state(self, state):
         """Change current connection state."""
+        self._connection_state = state
         signal = f"remote_homeassistant_{self._entry.unique_id}"
         async_dispatcher_send(self._hass, signal, state)
+
+    def _record_error(self, code):
+        """Keep a safe error code for downloadable diagnostics."""
+        self._last_error = code
+        if self._connection is not None:
+            self._connection_error = True
 
     @callback
     def _async_request_reauth(self, state):
@@ -543,6 +553,7 @@ class RemoteConnection:
         if self._auth_error_state is not None:
             return
         self._auth_error_state = state
+        self._record_error(state)
         self.set_connection_state(state)
         self._entry.async_start_reauth(self._hass)
 
@@ -583,13 +594,16 @@ class RemoteConnection:
                     self._verify_ssl,
                 )
             except OSError:
+                self._record_error("discovery_unreachable")
                 _LOGGER.exception("failed to connect")
             except InvalidAuth:
                 _LOGGER.warning("Remote access token was rejected")
                 self._async_request_reauth(STATE_AUTH_INVALID)
             except UnsupportedVersion:
+                self._record_error("unsupported_version")
                 _LOGGER.error("Unsupported version, at least 0.111 is required.")
             except Exception:
+                self._record_error("discovery_failed")
                 _LOGGER.exception("failed to fetch instance info")
             return None
 
@@ -599,6 +613,7 @@ class RemoteConnection:
             if not info:
                 return False
             if info and info["uuid"] != self._entry.unique_id:
+                self._record_error("instance_id_mismatch")
                 _LOGGER.error(
                     "instance id not matching: %s != %s",
                     info["uuid"],
@@ -631,6 +646,7 @@ class RemoteConnection:
                         url, max_msg_size=self._max_msg_size
                     )
                 except aiohttp.client_exceptions.ClientError:
+                    self._record_error("websocket_connect_failed")
                     _LOGGER.error("Could not connect to %s, retry in 10 seconds...", url)
                     self.set_connection_state(STATE_RECONNECTING)
                     await asyncio.sleep(10)
@@ -640,6 +656,7 @@ class RemoteConnection:
                     await connection.close()
                     return
                 self._connection = connection
+                self._connection_error = False
                 _LOGGER.info("Connected to home-assistant websocket at %s", url)
                 self._stop_listener = self._hass.bus.async_listen(
                     EVENT_HOMEASSISTANT_STOP, _async_stop_handler
@@ -691,6 +708,7 @@ class RemoteConnection:
             try:
                 await asyncio.wait_for(event.wait(), HEARTBEAT_TIMEOUT)
             except asyncio.TimeoutError:
+                self._record_error("heartbeat_timeout")
                 _LOGGER.warning("heartbeat failed")
 
                 # Schedule closing on event loop to avoid deadlock
@@ -739,6 +757,7 @@ class RemoteConnection:
     def _expire_request(self, message_id, message_type):
         """Expire a WebSocket request that never received a response."""
         if message_id in self._handlers:
+            self._record_error("response_timeout")
             _LOGGER.warning("Remote %s request %s timed out", message_type, message_id)
         self.cancel_request(message_id)
 
@@ -760,6 +779,7 @@ class RemoteConnection:
                 {"id": _id, "type": message_type, **extra_args}
             )
         except aiohttp.client_exceptions.ClientError as err:
+            self._record_error("websocket_send_failed")
             self.cancel_request(_id)
             _LOGGER.error("remote websocket connection closed: %s", err)
             await self._disconnected(connection)
@@ -772,6 +792,8 @@ class RemoteConnection:
     async def _disconnected(self, connection):
         if connection is not None and self._connection is not connection:
             return
+        if connection is not None and not self._is_stopping and not self._connection_error:
+            self._record_error("connection_lost")
         self._connection = None
         if connection is not None and not connection.closed:
             await connection.close()
@@ -828,6 +850,7 @@ class RemoteConnection:
             try:
                 data = await connection.receive()
             except aiohttp.client_exceptions.ClientError as err:
+                self._record_error("websocket_receive_failed")
                 _LOGGER.error("remote websocket connection closed: %s", err)
                 break
 
@@ -843,6 +866,7 @@ class RemoteConnection:
                 break
 
             if data.type == aiohttp.WSMsgType.ERROR:
+                self._record_error("websocket_error")
                 _LOGGER.error("websocket connection had an error")
                 if data.data.code == aiohttp.WSCloseCode.MESSAGE_TOO_BIG:
                     _LOGGER.error(f"please consider increasing message size with `{CONF_MAX_MSG_SIZE}`")
@@ -851,6 +875,7 @@ class RemoteConnection:
             try:
                 message = data.json()
             except TypeError as err:
+                self._record_error("invalid_websocket_message")
                 _LOGGER.error("could not decode data (%s) as json: %s", data, err)
                 break
 
@@ -874,6 +899,7 @@ class RemoteConnection:
                 try:
                     await self._connection.send_json(json_data)
                 except Exception as err:
+                    self._record_error("websocket_send_failed")
                     _LOGGER.error("could not send data to remote connection: %s", err)
                     break
 
