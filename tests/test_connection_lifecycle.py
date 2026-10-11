@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
+from homeassistant.config_entries import SOURCE_REAUTH
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.remote_homeassistant import RemoteConnection, STATE_AUTH_INVALID
+from custom_components.remote_homeassistant.rest_api import InvalidAuth
 
 
 UUID = "1234567890abcdef1234567890abcdef"
@@ -188,7 +190,7 @@ async def test_response_handlers_expire_but_subscriptions_stay(
 
 @pytest.mark.asyncio
 async def test_invalid_auth_keeps_error_state_without_retry(
-    hass, monkeypatch, device_registry
+    hass, monkeypatch, device_registry, enable_custom_integrations
 ):
     """A rejected token remains visible and cannot create a reconnect loop."""
     remote = make_remote(hass)
@@ -208,9 +210,40 @@ async def test_invalid_auth_keeps_error_state_without_retry(
         json=lambda: {"type": "auth_invalid"},
     ))
     await receiver
+    await hass.async_block_till_done()
 
     assert states[-1] == STATE_AUTH_INVALID
     assert remote._connection is None
     assert remote._connect_task is None
     get_info.assert_awaited_once()
+    assert len(list(remote._entry.async_get_active_flows(hass, {SOURCE_REAUTH}))) == 1
+    await remote.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_rest_auth_failure_starts_one_reauth_flow(
+    hass, monkeypatch, enable_custom_integrations
+):
+    """A revoked token detected before WebSocket login opens the same UI flow."""
+    remote = make_remote(hass)
+    states = []
+    remote.set_connection_state = states.append
+    get_info = AsyncMock(side_effect=InvalidAuth())
+    session = SimpleNamespace(ws_connect=AsyncMock())
+    monkeypatch.setattr("custom_components.remote_homeassistant.async_get_discovery_info", get_info)
+    monkeypatch.setattr(
+        "custom_components.remote_homeassistant.async_get_clientsession",
+        lambda *args: session,
+    )
+
+    await remote.async_connect()
+    await hass.async_block_till_done()
+    remote._async_request_reauth(STATE_AUTH_INVALID)
+    await hass.async_block_till_done()
+
+    assert states[-1] == STATE_AUTH_INVALID
+    assert remote._connection is None
+    session.ws_connect.assert_not_awaited()
+    get_info.assert_awaited_once()
+    assert len(list(remote._entry.async_get_active_flows(hass, {SOURCE_REAUTH}))) == 1
     await remote.async_stop()

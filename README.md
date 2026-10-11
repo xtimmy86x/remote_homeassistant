@@ -91,6 +91,12 @@ This is not needed on the main instance.
 
 You can generate an access token in the by logging into your remote instance, clicking on your user profile icon, and then selecting "Create Token" under "Long-Lived Access Tokens".
 
+If the saved token is revoked or expires, Home Assistant shows a reauthentication
+prompt for this connection. Enter a new long-lived access token created on the
+same remote instance. Your selected entities, prefixes, and other options are
+preserved. For a connection configured in YAML, update the token in YAML (or
+the referenced secret) too; a later YAML reload can restore the old token.
+
 Check "Secure" if you want to connect via a secure (https/wss) connection
 
 3. Before the first connection, choose which remote domains or entities to import.

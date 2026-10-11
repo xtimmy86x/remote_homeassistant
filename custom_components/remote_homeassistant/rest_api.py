@@ -51,7 +51,7 @@ async def async_get_discovery_info(hass, host, port, secure, access_token, verif
     async with session.get(url, headers=headers) as resp:
         if resp.status == 404:
             raise EndpointMissing()
-        if 400 <= resp.status < 500:
+        if resp.status in (401, 403):
             raise InvalidAuth()
         if resp.status != 200:
             raise ApiProblem()
