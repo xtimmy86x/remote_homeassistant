@@ -64,10 +64,9 @@
         },
         "events": {
           "title": "Odoberané udalosti (krok 4/4)",
-          "description": "Pridajte novú odoberanú udalosť zadaním jej názvu `Add new event` a stlačiť `Submit`. Odstráňte existujúce udalosti zrušením ich začiarknutia `Events`.\n\nOpustiť `Add new event` a stlačiť `Submit` aby ste nevykonali žiadne ďalšie zmeny.",
+          "description": "Vyhľadajte existujúce udalosti alebo zadajte nový názov do poľa Udalosti. Vybrané udalosti môžete odstrániť zo zoznamu a potom uložiť.",
           "data": {
-            "subscribe_events": "Udalosti",
-            "add_new_event": "Pridať novú udalosť"
+            "subscribe_events": "Udalosti"
           }
         }
       },

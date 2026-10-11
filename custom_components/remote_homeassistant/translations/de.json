@@ -64,10 +64,9 @@
       },
       "events": {
         "title": "Abonnierte Events (Schritt 4/4)",
-        "description": "Fügen Sie neue abonnierte Events hinzu, indem Sie ihren Namen in „Neue Events hinzufügen“ eingeben und auf „Absenden“ klicken. Deaktivieren Sie vorhandene Events, indem Sie sie unter „Events“ entfernen.\n\nLassen Sie „Neue Events hinzufügen“ leer und klicken Sie auf „Absenden“, um keine weiteren Änderungen vorzunehmen.",
+        "description": "Suchen Sie nach vorhandenen Events oder geben Sie unter „Events“ einen neuen Namen ein. Entfernen Sie ausgewählte Events und klicken Sie zum Speichern auf „Absenden“.",
         "data": {
-          "subscribe_events": "Events",
-          "add_new_event": "Neue Events hinzufügen"
+          "subscribe_events": "Events"
         }
       }
     }

@@ -6,7 +6,6 @@ from typing import Any, Mapping
 
 from urllib.parse import urlparse
 
-import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries, core
 from homeassistant.const import (
@@ -22,7 +21,14 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.instance_id import async_get
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 from homeassistant.util import slugify
 
 from . import async_yaml_to_config_entry
@@ -61,10 +67,21 @@ from .rest_api import (
 
 _LOGGER = logging.getLogger(__name__)
 
-ADD_NEW_EVENT = "add_new_event"
 CONF_IMPORT_ALL = "import_all"
 
 FILTER_OPTIONS = [CONF_ENTITY_ID, CONF_UNIT_OF_MEASUREMENT, CONF_ABOVE, CONF_BELOW]
+
+
+def _searchable_multi_select(options, *, custom_value=False):
+    """Show a searchable multi-picker for values from the remote instance."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=sorted(set(options)),
+            multiple=True,
+            mode=SelectSelectorMode.DROPDOWN,
+            custom_value=custom_value,
+        )
+    )
 
 
 def _filter_str(index: int, filter_conf: Mapping[str, str | float]) -> str:
@@ -308,19 +325,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Optional(
                         CONF_INCLUDE_DOMAINS,
                         default=user_input.get(CONF_INCLUDE_DOMAINS, []),
-                    ): cv.multi_select(domains),
+                    ): _searchable_multi_select(domains),
                     vol.Optional(
                         CONF_INCLUDE_ENTITIES,
                         default=user_input.get(CONF_INCLUDE_ENTITIES, []),
-                    ): cv.multi_select(self._remote_entities),
+                    ): _searchable_multi_select(self._remote_entities),
                     vol.Optional(
                         CONF_EXCLUDE_DOMAINS,
                         default=user_input.get(CONF_EXCLUDE_DOMAINS, []),
-                    ): cv.multi_select(domains),
+                    ): _searchable_multi_select(domains),
                     vol.Optional(
                         CONF_EXCLUDE_ENTITIES,
                         default=user_input.get(CONF_EXCLUDE_ENTITIES, []),
-                    ): cv.multi_select(self._remote_entities),
+                    ): _searchable_multi_select(self._remote_entities),
                     vol.Optional(
                         CONF_ENTITY_PREFIX,
                         default=user_input.get(CONF_ENTITY_PREFIX, ""),
@@ -389,7 +406,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize remote_homeassistant options flow."""
         # self.config_entry wird von Home Assistant gesetzt (read-only Property)
         self.filters: list[Any] | None = None
-        self.events: set[Any] | None = None
         self.options: dict[str, Any] | None = None
 
     async def async_step_init(
@@ -435,7 +451,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_LOAD_COMPONENTS,
                         default=self._default(CONF_LOAD_COMPONENTS),
-                    ): cv.multi_select(sorted(domains)),
+                    ): _searchable_multi_select(domains),
                     vol.Required(
                         CONF_SERVICE_PREFIX,
                         default=self.config_entry.options.get(CONF_SERVICE_PREFIX)
@@ -444,7 +460,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_SERVICES,
                         default=self._default(CONF_SERVICES),
-                    ): cv.multi_select(remote.proxy_services.services),
+                    ): _searchable_multi_select(
+                        remote.proxy_services.services
+                        + self.config_entry.options.get(CONF_SERVICES, [])
+                    ),
                 }
             ),
         )
@@ -463,19 +482,19 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_INCLUDE_DOMAINS,
                         default=self._default(CONF_INCLUDE_DOMAINS),
-                    ): cv.multi_select(domains),
+                    ): _searchable_multi_select(domains),
                     vol.Optional(
                         CONF_INCLUDE_ENTITIES,
                         default=self._default(CONF_INCLUDE_ENTITIES),
-                    ): cv.multi_select(entities),
+                    ): _searchable_multi_select(entities),
                     vol.Optional(
                         CONF_EXCLUDE_DOMAINS,
                         default=self._default(CONF_EXCLUDE_DOMAINS),
-                    ): cv.multi_select(domains),
+                    ): _searchable_multi_select(domains),
                     vol.Optional(
                         CONF_EXCLUDE_ENTITIES,
                         default=self._default(CONF_EXCLUDE_ENTITIES),
-                    ): cv.multi_select(entities),
+                    ): _searchable_multi_select(entities),
                 }
             ),
         )
@@ -519,10 +538,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="general_filters",
             data_schema=vol.Schema(
                 {
-                    vol.Optional(CONF_FILTER, default=selected): cv.multi_select(
+                    vol.Optional(CONF_FILTER, default=selected): _searchable_multi_select(
                         strings
                     ),
-                    vol.Optional(CONF_ENTITY_ID): str,
+                    vol.Optional(CONF_ENTITY_ID): SelectSelector(
+                        SelectSelectorConfig(
+                            options=self._domains_and_entities()[1],
+                            mode=SelectSelectorMode.DROPDOWN,
+                            custom_value=True,
+                        )
+                    ),
                     vol.Optional(CONF_UNIT_OF_MEASUREMENT): str,
                     vol.Optional(CONF_ABOVE): vol.Coerce(float),
                     vol.Optional(CONF_BELOW): vol.Coerce(float),
@@ -533,31 +558,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_events(self, user_input=None):
         """Manage event options."""
         if user_input is not None:
-            if ADD_NEW_EVENT not in user_input and self.options is not None:
+            if self.options is not None:
                 self.options[CONF_SUBSCRIBE_EVENTS] = user_input.get(
                     CONF_SUBSCRIBE_EVENTS, []
                 )
                 return self.async_create_entry(title="", data=self.options)
-
-            selected = user_input.get(CONF_SUBSCRIBE_EVENTS, [])
-            if self.events is None:
-                self.events = set()
-            self.events.add(user_input[ADD_NEW_EVENT])
-            selected.append(user_input[ADD_NEW_EVENT])
-        else:
-            self.events = set(
-                self.config_entry.options.get(CONF_SUBSCRIBE_EVENTS) or []
-            )
-            selected = self._default(CONF_SUBSCRIBE_EVENTS)
 
         return self.async_show_form(
             step_id="events",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_SUBSCRIBE_EVENTS, default=selected
-                    ): cv.multi_select(self.events),
-                    vol.Optional(ADD_NEW_EVENT): str,
+                        CONF_SUBSCRIBE_EVENTS,
+                        default=self._default(CONF_SUBSCRIBE_EVENTS),
+                    ): _searchable_multi_select(
+                        self.config_entry.options.get(CONF_SUBSCRIBE_EVENTS, []),
+                        custom_value=True,
+                    ),
                 }
             ),
         )
@@ -584,5 +601,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         entities = sorted(
             remote._all_entity_names | include_entities | exclude_entities
         )
-        domains = sorted({entity_id.split(".")[0] for entity_id in entities})
+        domains = sorted(
+            {entity_id.split(".")[0] for entity_id in entities}
+            | set(self.config_entry.options.get(CONF_INCLUDE_DOMAINS, []))
+            | set(self.config_entry.options.get(CONF_EXCLUDE_DOMAINS, []))
+        )
         return domains, entities

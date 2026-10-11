@@ -87,10 +87,9 @@
       },
       "events": {
         "title": "Eventi sottoscritti (passo 4/4)",
-        "description": "Aggiungi un nuovo evento sottoscritto inserendone il nome in `Aggiungi nuovo evento`, quindi premi `Invia`. Rimuovi gli eventi esistenti deselezionandoli in `Eventi`.\n\nLascia vuoto `Aggiungi nuovo evento` e premi `Invia` per non apportare altre modifiche.",
+        "description": "Cerca gli eventi esistenti oppure digita un nuovo nome nel campo Eventi. Per rimuoverne uno, elimina la selezione e premi Invia.",
         "data": {
-          "subscribe_events": "Eventi",
-          "add_new_event": "Aggiungi nuovo evento"
+          "subscribe_events": "Eventi"
         }
       }
     },

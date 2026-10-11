@@ -26,6 +26,6 @@ async def test_italian_config_flow_is_translated(
     assert it[f"component.{DOMAIN}.config.step.connection_details.title"] == (
         "Dettagli della connessione"
     )
-    assert options_it[f"component.{DOMAIN}.options.step.events.data.add_new_event"] == (
-        "Aggiungi nuovo evento"
+    assert options_it[f"component.{DOMAIN}.options.step.events.data.subscribe_events"] == (
+        "Eventi"
     )
