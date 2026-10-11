@@ -1,12 +1,14 @@
 """Exercise retry, reconnect, and unload with a controlled WebSocket."""
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
 from homeassistant.config_entries import SOURCE_REAUTH
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.remote_homeassistant import RemoteConnection, STATE_AUTH_INVALID
@@ -104,6 +106,32 @@ async def test_stop_closes_socket_and_tasks(hass, monkeypatch, device_registry):
     assert remote._stop_listener is None
     assert remote._connection is None
     get_info.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_home_assistant_stop_removes_listener_once(
+    hass, monkeypatch, device_registry, caplog
+):
+    """A stop event closes the socket and unregisters its listener once."""
+    remote = make_remote(hass)
+    socket = Socket()
+    monkeypatch.setattr(
+        "custom_components.remote_homeassistant.async_get_discovery_info",
+        AsyncMock(return_value={"uuid": UUID, "location_name": "Remote"}),
+    )
+    monkeypatch.setattr(
+        "custom_components.remote_homeassistant.async_get_clientsession",
+        lambda *args: SimpleNamespace(ws_connect=AsyncMock(return_value=socket)),
+    )
+
+    await remote.async_connect()
+    with caplog.at_level(logging.ERROR, logger="homeassistant.core"):
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await asyncio.wait_for(hass.async_block_till_done(), 1)
+
+    assert socket.closed
+    assert remote._stop_listener is None
+    assert not any("Unable to remove unknown job listener" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
