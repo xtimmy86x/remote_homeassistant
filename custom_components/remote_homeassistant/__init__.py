@@ -149,6 +149,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 HEARTBEAT_INTERVAL = 20
 HEARTBEAT_TIMEOUT = 5
+RESPONSE_TIMEOUT = 30
 
 REGISTRY_EVENTS = {
     ar.EVENT_AREA_REGISTRY_UPDATED,
@@ -400,6 +401,7 @@ class RemoteConnection:
         self._all_entity_names = set()
         self._remote_imports = set()
         self._handlers = {}
+        self._handler_timeouts = {}
         self._subscription_ids = set()
         self._remove_listener = None
         self._registry_sync = RemoteRegistrySync(hass, config_entry, self._prefixed_entity_id)
@@ -724,7 +726,23 @@ class RemoteConnection:
         self.__id += 1
         return _id
 
-    async def call(self, handler, message_type, **extra_args) -> None:
+    @callback
+    def cancel_request(self, message_id):
+        """Forget a pending response and cancel its expiration timer."""
+        self._handlers.pop(message_id, None)
+        self._subscription_ids.discard(message_id)
+        timeout = self._handler_timeouts.pop(message_id, None)
+        if timeout is not None:
+            timeout.cancel()
+
+    @callback
+    def _expire_request(self, message_id, message_type):
+        """Expire a WebSocket request that never received a response."""
+        if message_id in self._handlers:
+            _LOGGER.warning("Remote %s request %s timed out", message_type, message_id)
+        self.cancel_request(message_id)
+
+    async def call(self, handler, message_type, **extra_args) -> int | None:
         connection = self._connection
         if connection is None:
             _LOGGER.error("No remote websocket connection")
@@ -734,13 +752,22 @@ class RemoteConnection:
         self._handlers[_id] = handler
         if message_type == "subscribe_events":
             self._subscription_ids.add(_id)
+        self._handler_timeouts[_id] = self._hass.loop.call_later(
+            RESPONSE_TIMEOUT, self._expire_request, _id, message_type
+        )
         try:
             await connection.send_json(
                 {"id": _id, "type": message_type, **extra_args}
             )
         except aiohttp.client_exceptions.ClientError as err:
+            self.cancel_request(_id)
             _LOGGER.error("remote websocket connection closed: %s", err)
             await self._disconnected(connection)
+            return None
+        except BaseException:
+            self.cancel_request(_id)
+            raise
+        return _id
 
     async def _disconnected(self, connection):
         if connection is not None and self._connection is not connection:
@@ -768,6 +795,9 @@ class RemoteConnection:
         self._remove_listener = None
         self._stop_listener = None
         self._handlers.clear()
+        for timeout in self._handler_timeouts.values():
+            timeout.cancel()
+        self._handler_timeouts.clear()
         self._subscription_ids.clear()
         self._entities = set()
         self._all_entity_names = set()
@@ -855,11 +885,17 @@ class RemoteConnection:
 
             else:
                 message_id = message.get("id")
-                handler = (
-                    self._handlers.get(message_id)
-                    if message_id in self._subscription_ids
-                    else self._handlers.pop(message_id, None)
-                )
+                handler = self._handlers.get(message_id)
+                if message_id in self._subscription_ids:
+                    if message["type"] == "result":
+                        if not message.get("success"):
+                            self.cancel_request(message_id)
+                        else:
+                            timeout = self._handler_timeouts.pop(message_id, None)
+                            if timeout is not None:
+                                timeout.cancel()
+                else:
+                    self.cancel_request(message_id)
                 if handler is not None:
                     if inspect.iscoroutinefunction(handler):
                         await handler(message)

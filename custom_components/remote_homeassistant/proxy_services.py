@@ -96,14 +96,18 @@ class ProxyServices:
 
         service_prefix = self.entry.options.get(CONF_SERVICE_PREFIX)
         service = event.service[len(service_prefix) :]
-        await self.remote.call(
+        request_id = await self.remote.call(
             _resp,
             "call_service",
             domain=event.domain,
             service=service,
             service_data=event.data.copy(),
         )
-
-        await asyncio.wait_for(ev.wait(), SERVICE_CALL_LIMIT)
+        if request_id is None:
+            raise HomeAssistantError("Remote connection is unavailable")
+        try:
+            await asyncio.wait_for(ev.wait(), SERVICE_CALL_LIMIT)
+        finally:
+            self.remote.cancel_request(request_id)
         if isinstance(res, dict) and not res["success"]:
             raise HomeAssistantError(res["error"]["message"])
