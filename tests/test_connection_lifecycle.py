@@ -90,6 +90,11 @@ async def test_stop_closes_socket_and_tasks(hass, monkeypatch, device_registry):
     heartbeat_task = remote._heartbeat_task
     assert remote._stop_listener is not None
 
+    # HA's bootstrap wait must finish while the persistent connection is active.
+    await asyncio.wait_for(hass.async_block_till_done(), 1)
+    assert not receive_task.done()
+    assert not heartbeat_task.done()
+
     await remote.async_stop()
 
     assert socket.closed
@@ -136,7 +141,11 @@ async def test_disconnect_retries_once_and_stop_cancels_it(
     await remote._disconnected(socket)
     assert attempts == 2
 
+    # An offline reconnect can wait indefinitely without delaying HA startup.
+    await asyncio.wait_for(hass.async_block_till_done(), 1)
+
     retry_task = remote._connect_task
+    assert not retry_task.done()
     await remote.async_stop()
     assert retry_task.cancelled()
     assert attempts == 2
