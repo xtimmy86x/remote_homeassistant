@@ -56,6 +56,7 @@ from custom_components.remote_homeassistant.views import DiscoveryInfoView
 
 from .const import (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES,
                     CONF_INCLUDE_DOMAINS, CONF_INCLUDE_ENTITIES,
+                    CONF_IMPORT_ALL,
                     CONF_LOAD_COMPONENTS, CONF_OPTIONS, CONF_REMOTE_CONNECTION,
                     CONF_SERVICE_PREFIX, CONF_SERVICES, CONF_UNSUB_LISTENER,
                     DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN)
@@ -226,6 +227,9 @@ async def async_setup(hass: HomeAssistant.core.HomeAssistant, config: ConfigType
     """Set up the remote_homeassistant component."""
     hass.data.setdefault(DOMAIN, {})
 
+    from .panel import async_setup_panel
+    await async_setup_panel(hass)
+
     async def _handle_reload(service):
         """Handle reload service call."""
         config = await async_integration_yaml_config(hass, DOMAIN)
@@ -367,6 +371,10 @@ class RemoteConnection:
         # for include/exclude logic
         self._whitelist_e = set(config_entry.options.get(CONF_INCLUDE_ENTITIES, []))
         self._whitelist_d = set(config_entry.options.get(CONF_INCLUDE_DOMAINS, []))
+        # Legacy entries with a whitelist must retain their restricted imports.
+        self._import_all = config_entry.options.get(
+            CONF_IMPORT_ALL, not (self._whitelist_e or self._whitelist_d)
+        )
         self._blacklist_e = set(config_entry.options.get(CONF_EXCLUDE_ENTITIES, []))
         self._blacklist_d = set(config_entry.options.get(CONF_EXCLUDE_DOMAINS, []))
 
@@ -1024,8 +1032,12 @@ class RemoteConnection:
             if entity_id in self._blacklist_e or domain in self._blacklist_d:
                 return
 
+            if not self._import_all and not (self._whitelist_e or self._whitelist_d):
+                return
+
             if (
-                (self._whitelist_e or self._whitelist_d)
+                not self._import_all
+                and (self._whitelist_e or self._whitelist_d)
                 and entity_id not in self._whitelist_e
                 and domain not in self._whitelist_d
             ):

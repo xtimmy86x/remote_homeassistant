@@ -8,6 +8,7 @@
       },
       "connection_details": {
         "title": "Dettagli della connessione",
+        "description": "Dopo aver aggiunto la connessione, seleziona le entità e configura le altre opzioni nel pannello laterale Remote Home Assistant.",
         "data": {
           "host": "Host",
           "port": "Porta",

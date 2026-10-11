@@ -20,6 +20,7 @@ CONF_INCLUDE_DOMAINS = "include_domains"
 CONF_INCLUDE_ENTITIES = "include_entities"
 CONF_EXCLUDE_DOMAINS = "exclude_domains"
 CONF_EXCLUDE_ENTITIES = "exclude_entities"
+CONF_IMPORT_ALL = "import_all"
 
 # FIXME: There seems to be no way to make these strings translateable
 CONF_MAIN = "Add a remote node"

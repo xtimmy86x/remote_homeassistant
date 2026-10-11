@@ -8,6 +8,7 @@
       },
       "connection_details": {
         "title": "Connection details",
+        "description": "After adding the connection, select entities and configure the other options in the Remote Home Assistant sidebar panel.",
         "data": {
           "host": "Host",
           "port": "Port",

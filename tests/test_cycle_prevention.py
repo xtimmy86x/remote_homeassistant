@@ -80,6 +80,32 @@ async def start_with_states(remote, states):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({"import_all": False}, None),
+        ({"import_all": False, "include_entities": ["sensor.native"]}, "42"),
+        ({"include_entities": ["sensor.other"]}, None),
+        ({"import_all": True, "include_entities": ["sensor.other"]}, "42"),
+        ({}, "42"),
+    ],
+)
+async def test_panel_import_mode_preserves_existing_entries(
+    hass, entity_registry, options, expected
+):
+    """Explicit import mode and pre-panel whitelists have stable semantics."""
+    entry = make_entry(hass, options={**options, "entity_prefix": "panel_"})
+    remote = RemoteConnection(hass, entry)
+    await start_with_states(remote, [
+        {"entity_id": "sensor.native", "state": "42", "attributes": {}},
+    ])
+
+    imported = hass.states.get("sensor.panel_native")
+    assert (imported.state if imported else None) == expected
+    assert "sensor.native" in remote._all_entity_names
+
+
+@pytest.mark.asyncio
 async def test_snapshot_skips_imported_state_even_when_selected(hass, entity_registry):
     """Explicit selection cannot override the cycle guard or keep a stale copy."""
     entry = make_entry(hass, options={
