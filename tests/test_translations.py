@@ -13,6 +13,9 @@ async def test_italian_config_flow_is_translated(
     """Italian users receive localized configuration-flow text."""
     en = await async_get_translations(hass, "en", "config", integrations={DOMAIN})
     it = await async_get_translations(hass, "it", "config", integrations={DOMAIN})
+    options_it = await async_get_translations(
+        hass, "it", "options", integrations={DOMAIN}
+    )
 
     assert en[f"component.{DOMAIN}.config.abort.reauth_successful"] == (
         "Reauthentication successful. The remote connection is using the new token."
@@ -23,6 +26,6 @@ async def test_italian_config_flow_is_translated(
     assert it[f"component.{DOMAIN}.config.step.connection_details.title"] == (
         "Dettagli della connessione"
     )
-    assert it[f"component.{DOMAIN}.options.step.events.data.add_new_event"] == (
+    assert options_it[f"component.{DOMAIN}.options.step.events.data.add_new_event"] == (
         "Aggiungi nuovo evento"
     )

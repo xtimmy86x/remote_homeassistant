@@ -653,9 +653,15 @@ class RemoteConnection:
                     sw_version=info.get("ha_version"),
                 )
 
-                self._receive_task = self._hass.async_create_task(self._recv(connection))
-                self._heartbeat_task = self._hass.async_create_task(
-                    self._heartbeat_loop(connection)
+                self._receive_task = self._entry.async_create_background_task(
+                    self._hass,
+                    self._recv(connection),
+                    f"{DOMAIN}_receive_{self._entry.entry_id}",
+                )
+                self._heartbeat_task = self._entry.async_create_background_task(
+                    self._hass,
+                    self._heartbeat_loop(connection),
+                    f"{DOMAIN}_heartbeat_{self._entry.entry_id}",
                 )
                 return
         finally:
@@ -775,7 +781,11 @@ class RemoteConnection:
         if not self._is_stopping and self._auth_error_state is None and (
             self._connect_task is None or self._connect_task.done()
         ):
-            self._connect_task = self._hass.async_create_task(self.async_connect())
+            self._connect_task = self._entry.async_create_background_task(
+                self._hass,
+                self.async_connect(),
+                f"{DOMAIN}_reconnect_{self._entry.entry_id}",
+            )
 
     async def _recv(self, connection):
         try:
