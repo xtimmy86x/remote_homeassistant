@@ -29,6 +29,13 @@
           "entity_prefix": "Entity prefix (optional)",
           "entity_friendly_name_prefix": "Entity name prefix (optional)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Update remote access token",
+        "description": "The remote instance rejected the saved token. Create a new long-lived access token on that instance and enter it here.",
+        "data": {
+          "access_token": "New access token"
+        }
       }
     },
     "error": {
@@ -41,7 +48,8 @@
       "select_entities": "Select at least one domain or entity, or choose Import all entities."
     },
     "abort": {
-      "already_configured": "Already configured"
+      "already_configured": "Already configured",
+      "wrong_instance": "The token belongs to a different remote Home Assistant instance."
     }
   },
   "options": {

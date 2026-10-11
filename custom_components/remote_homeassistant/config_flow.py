@@ -22,6 +22,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.instance_id import async_get
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 from homeassistant.util import slugify
 
 from . import async_yaml_to_config_entry
@@ -121,6 +122,58 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Get options flow for this handler."""
         # config_entry internally set by OptionsFlow (read-only Property)
         return OptionsFlowHandler()
+
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]):
+        """Ask for a replacement token when the remote rejects the current one."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Validate the new token against the same remote installation."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            entry = self._get_reauth_entry()
+            data = {**entry.data, CONF_ACCESS_TOKEN: user_input[CONF_ACCESS_TOKEN]}
+            try:
+                info = await validate_input(self.hass, data)
+                await async_get_remote_entity_ids(
+                    self.hass,
+                    data[CONF_HOST],
+                    data[CONF_PORT],
+                    data.get(CONF_SECURE, False),
+                    data[CONF_ACCESS_TOKEN],
+                    data.get(CONF_VERIFY_SSL, True),
+                )
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except EndpointMissing:
+                errors["base"] = "missing_endpoint"
+            except UnsupportedVersion:
+                errors["base"] = "unsupported_version"
+            except (ApiProblem, BadResponse):
+                errors["base"] = "api_problem"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected error validating replacement token")
+                errors["base"] = "unknown"
+            else:
+                await self.async_set_unique_id(info["uuid"])
+                self._abort_if_unique_id_mismatch(reason="wrong_instance")
+                # The existing update listener reloads the entry once.
+                return self.async_update_and_abort(
+                    entry,
+                    data_updates={CONF_ACCESS_TOKEN: user_input[CONF_ACCESS_TOKEN]},
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({
+                vol.Required(CONF_ACCESS_TOKEN): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                ),
+            }),
+            errors=errors,
+        )
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""

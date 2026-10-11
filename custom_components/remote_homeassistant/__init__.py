@@ -61,7 +61,7 @@ from .const import (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES,
                     DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN)
 from .proxy_services import ProxyServices
 from .remote_registry import RemoteRegistrySync
-from .rest_api import UnsupportedVersion, async_get_discovery_info
+from .rest_api import InvalidAuth, UnsupportedVersion, async_get_discovery_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -536,6 +536,15 @@ class RemoteConnection:
         async_dispatcher_send(self._hass, signal, state)
 
     @callback
+    def _async_request_reauth(self, state):
+        """Expose an authentication failure and offer a new token in the UI."""
+        if self._auth_error_state is not None:
+            return
+        self._auth_error_state = state
+        self.set_connection_state(state)
+        self._entry.async_start_reauth(self._hass)
+
+    @callback
     def _get_url(self):
         """Get url to connect to."""
         return "%s://%s:%s/api/websocket" % (
@@ -573,6 +582,9 @@ class RemoteConnection:
                 )
             except OSError:
                 _LOGGER.exception("failed to connect")
+            except InvalidAuth:
+                _LOGGER.warning("Remote access token was rejected")
+                self._async_request_reauth(STATE_AUTH_INVALID)
             except UnsupportedVersion:
                 _LOGGER.error("Unsupported version, at least 0.111 is required.")
             except Exception:
@@ -601,6 +613,9 @@ class RemoteConnection:
         try:
             while not self._is_stopping:
                 info = await _async_instance_get_info()
+
+                if self._auth_error_state is not None:
+                    return
 
                 # Verify we are talking to correct instance
                 if not _async_instance_id_match(info):
@@ -813,7 +828,7 @@ class RemoteConnection:
                     json_data = {"type": api.TYPE_AUTH, "access_token": self._access_token}
                 else:
                     _LOGGER.error("Access token required, but not provided")
-                    self._auth_error_state = STATE_AUTH_REQUIRED
+                    self._async_request_reauth(STATE_AUTH_REQUIRED)
                     await connection.close()
                     return
                 try:
@@ -824,7 +839,7 @@ class RemoteConnection:
 
             elif message["type"] == api.TYPE_AUTH_INVALID:
                 _LOGGER.error("Auth invalid, check your access token")
-                self._auth_error_state = STATE_AUTH_INVALID
+                self._async_request_reauth(STATE_AUTH_INVALID)
                 await connection.close()
                 return
 
