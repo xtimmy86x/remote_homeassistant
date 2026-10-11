@@ -641,7 +641,7 @@ class RemoteConnection:
                     return
                 self._connection = connection
                 _LOGGER.info("Connected to home-assistant websocket at %s", url)
-                self._stop_listener = self._hass.bus.async_listen_once(
+                self._stop_listener = self._hass.bus.async_listen(
                     EVENT_HOMEASSISTANT_STOP, _async_stop_handler
                 )
 
