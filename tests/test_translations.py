@@ -1,4 +1,4 @@
-"""Check the reauthentication result shown in the Home Assistant UI."""
+"""Check the Italian translations shown in the Home Assistant UI."""
 
 import pytest
 from homeassistant.helpers.translation import async_get_translations
@@ -7,21 +7,22 @@ from custom_components.remote_homeassistant.const import DOMAIN
 
 
 @pytest.mark.asyncio
-async def test_reauth_success_has_italian_and_english_text(
+async def test_italian_config_flow_is_translated(
     hass, enable_custom_integrations
 ):
-    """Older Home Assistant versions resolve the abort reason locally."""
-    key = f"component.{DOMAIN}.config.abort.reauth_successful"
+    """Italian users receive localized configuration-flow text."""
     en = await async_get_translations(hass, "en", "config", integrations={DOMAIN})
     it = await async_get_translations(hass, "it", "config", integrations={DOMAIN})
 
-    assert en[key] == (
+    assert en[f"component.{DOMAIN}.config.abort.reauth_successful"] == (
         "Reauthentication successful. The remote connection is using the new token."
     )
-    assert it[key] == (
+    assert it[f"component.{DOMAIN}.config.abort.reauth_successful"] == (
         "Riautenticazione riuscita. La connessione remota usa il nuovo token."
     )
-    # Adding a partial Italian file still leaves earlier setup steps readable.
     assert it[f"component.{DOMAIN}.config.step.connection_details.title"] == (
-        "Connection details"
+        "Dettagli della connessione"
+    )
+    assert it[f"component.{DOMAIN}.options.step.events.data.add_new_event"] == (
+        "Aggiungi nuovo evento"
     )

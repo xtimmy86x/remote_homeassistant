@@ -1,0 +1,12 @@
+{
+  "state": {
+    "remote_homeassistant___": {
+      "disconnected": "Disconnesso",
+      "connecting": "Connessione in corso",
+      "connected": "Connesso",
+      "reconnecting": "Riconnessione in corso",
+      "auth_invalid": "Token di accesso non valido",
+      "auth_required": "Autenticazione richiesta"
+    }
+  }
+}

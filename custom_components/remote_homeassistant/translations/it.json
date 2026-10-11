@@ -1,6 +1,35 @@
 {
   "config": {
+    "flow_title": "Remoto: {name}",
     "step": {
+      "user": {
+        "title": "Seleziona il tipo di installazione",
+        "description": "Il nodo remoto è l'istanza dalla quale vengono raccolti gli stati"
+      },
+      "connection_details": {
+        "title": "Dettagli della connessione",
+        "data": {
+          "host": "Host",
+          "port": "Porta",
+          "secure": "Protetta",
+          "verify_ssl": "Verifica SSL",
+          "access_token": "Token di accesso",
+          "max_message_size": "Dimensione massima del messaggio"
+        }
+      },
+      "entity_selection": {
+        "title": "Scegli le entità remote",
+        "description": "Seleziona i domini o le entità da importare prima della prima connessione. Le esclusioni hanno la precedenza. Per importare tutto, seleziona Importa tutte le entità.",
+        "data": {
+          "import_all": "Importa tutte le entità",
+          "include_domains": "Includi domini",
+          "include_entities": "Includi entità",
+          "exclude_domains": "Escludi domini",
+          "exclude_entities": "Escludi entità",
+          "entity_prefix": "Prefisso dell'entità (facoltativo)",
+          "entity_friendly_name_prefix": "Prefisso del nome dell'entità (facoltativo)"
+        }
+      },
       "reauth_confirm": {
         "title": "Aggiorna il token di accesso remoto",
         "description": "L'istanza remota ha rifiutato il token salvato. Crea un nuovo token di accesso permanente su quella istanza e inseriscilo qui.",
@@ -9,9 +38,64 @@
         }
       }
     },
+    "error": {
+      "api_problem": "Risposta non valida dal server",
+      "cannot_connect": "Impossibile connettersi al server",
+      "invalid_auth": "Credenziali non valide",
+      "unsupported_version": "Versione non supportata. È richiesta almeno la versione 0.111.",
+      "unknown": "Si è verificato un errore sconosciuto",
+      "missing_endpoint": "Devi installare Remote Home Assistant su questo host e aggiungere remote_homeassistant: alla sua configurazione.",
+      "select_entities": "Seleziona almeno un dominio o un'entità, oppure scegli Importa tutte le entità."
+    },
     "abort": {
+      "already_configured": "Già configurato",
       "reauth_successful": "Riautenticazione riuscita. La connessione remota usa il nuovo token.",
       "wrong_instance": "Il token appartiene a un'altra istanza remota di Home Assistant."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni di base (passo 1/4)",
+        "data": {
+          "entity_prefix": "Prefisso dell'entità (facoltativo)",
+          "entity_friendly_name_prefix": "Prefisso del nome dell'entità (facoltativo)",
+          "load_components": "Carica il componente (se non è caricato)",
+          "service_prefix": "Prefisso del servizio",
+          "services": "Servizi remoti"
+        }
+      },
+      "domain_entity_filters": {
+        "title": "Filtri di domini ed entità (passo 2/4)",
+        "data": {
+          "include_domains": "Includi domini",
+          "include_entities": "Includi entità",
+          "exclude_domains": "Escludi domini",
+          "exclude_entities": "Escludi entità"
+        }
+      },
+      "general_filters": {
+        "title": "Filtri (passo 3/4)",
+        "description": "Aggiungi un nuovo filtro specificando l'`ID entità`, uno o più attributi del filtro, quindi premi `Invia`. Rimuovi i filtri esistenti deselezionandoli in `Filtri`.\n\nLascia vuoto l'`ID entità` e premi `Invia` per non apportare altre modifiche.",
+        "data": {
+          "filter": "Filtri",
+          "entity_id": "ID entità",
+          "unit_of_measurement": "Unità di misura",
+          "above": "Sopra",
+          "below": "Sotto"
+        }
+      },
+      "events": {
+        "title": "Eventi sottoscritti (passo 4/4)",
+        "description": "Aggiungi un nuovo evento sottoscritto inserendone il nome in `Aggiungi nuovo evento`, quindi premi `Invia`. Rimuovi gli eventi esistenti deselezionandoli in `Eventi`.\n\nLascia vuoto `Aggiungi nuovo evento` e premi `Invia` per non apportare altre modifiche.",
+        "data": {
+          "subscribe_events": "Eventi",
+          "add_new_event": "Aggiungi nuovo evento"
+        }
+      }
+    },
+    "abort": {
+      "not_supported": "Nessuna opzione di configurazione supportata per un nodo remoto"
     }
   }
 }
