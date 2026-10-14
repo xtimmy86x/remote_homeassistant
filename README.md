@@ -57,6 +57,9 @@ A possible use case for this is to be able to use different Z-Wave networks, on 
 
 This component *must* be installed on both the main and remote instance of Home Assistant
 
+Version 4.7.0 requires Home Assistant 2025.3 or newer because attribute filters
+use configuration subentries. It was tested with Home Assistant 2026.9.4.
+
 If you use HACS:
 
 1. Click install.
@@ -81,49 +84,42 @@ This is not needed on the main instance.
 
 ### Web (Config flow)
 
-1. Add a new Remote Home-Assistant integration
+1. Add **Remote Home-Assistant** in Settings → Devices & services. Choose
+   **Add a remote node**. On the remote instance, choose **Configure as remote
+   node** if you use the integration's remote endpoint.
 
-<img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/setup.png" height="400"/>
+2. Enter the host, port and access token. SSL verification and maximum message
+   size are under **Advanced connection settings**. Create a long-lived access
+   token from the user profile on the remote instance.
 
-2. Specify the connection details to the remote instance
+3. Choose which remote domains or entities to import. You can also set
+   exclusions and prefixes, or explicitly choose **Import all entities**. New
+   connections import nothing until a domain or entity is selected or **Import
+   all entities** is enabled. Exclusions take precedence. An entity ID prefix
+   is prepended to the object ID: enter `casa_` to get IDs such as
+   `sensor.casa_temperature`.
 
-<img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/device.png" height="400"/>
+After setup, use **Configure** on the connection to open the options menu. Its
+four sections (**Domains & entities**, **Entity naming**, **Remote services**,
+**Subscribed events**) each save independently; there is no need to go through
+every section for a single change. The menu previews the selected entity count.
+Use **Add filter** on the integration page to create attribute filters; each
+filter can subsequently be edited or deleted there. Existing UI filters are
+migrated to these entries on upgrade. Filters defined in YAML remain in YAML.
 
-You can generate an access token in the by logging into your remote instance, clicking on your user profile icon, and then selecting "Create Token" under "Long-Lived Access Tokens".
+Use **Reconfigure** on the connection to change its host, port, token or TLS
+settings. Leaving the token blank keeps the existing one. Reconfiguration
+checks that you are connecting to the same remote installation; YAML-managed
+connections must be edited in `configuration.yaml` instead. If the token is
+revoked, Home Assistant also shows a reauthentication prompt. For a YAML
+connection, update the token in YAML (or the referenced secret) too, since a
+later YAML reload can restore the old token.
 
-If the saved token is revoked or expires, Home Assistant shows a reauthentication
-prompt for this connection. Enter a new long-lived access token created on the
-same remote instance. Your selected entities, prefixes, and other options are
-preserved. For a connection configured in YAML, update the token in YAML (or
-the referenced secret) too; a later YAML reload can restore the old token.
-
-Check "Secure" if you want to connect via a secure (https/wss) connection
-
-3. Before the first connection, choose which remote domains or entities to import.
-   You can also exclude domains or entities and set a prefix. The integration
-   does not import any entities until you select at least one domain or entity,
-   or explicitly choose "Import all entities". Exclusions take precedence.
-   An entity prefix is prepended directly to the object ID, so use a trailing
-   underscore (for example, `casa_`) if you want one in the resulting ID.
-
-4. After the instance is added, you can configure additional Options by clicking the "Options" button.
-
-<img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/options.png" height="200"/>
-
-5. You can configure an optional prefix that gets prepended to all remote entities (if unsure, leave this blank).
-
-<img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/step1.png" height="200"/>
-
-Click "Submit" to proceed to the next step.
-
-6. You can also change the filters to include/exclude specified entities or domains from the remote instance.
-   After the next successful state synchronization, entities no longer imported
-   are removed from the entity registry, including entries left by older
-   versions of this integration. Temporary connection loss keeps the registry
-   entries. Removing a remote connection also removes its remaining imported
-   entries. Recorder history is not deleted.
-
-<img src="https://raw.githubusercontent.com/lukas-hetzenecker/home-assistant-remote/master/img/step2.png" height="200"/>
+After the next successful state synchronization, entities no longer imported
+are removed from the entity registry, including entries left by older
+versions of this integration. Temporary connection loss keeps the registry
+entries. Removing a remote connection also removes its remaining imported
+entries. Recorder history is not deleted.
 
 
 
@@ -344,5 +340,5 @@ See also the discussion on https://github.com/home-assistant/home-assistant/pull
 
 [hacs]: https://github.com/hacs/integration
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
-[license-shield]: https://img.shields.io/github/license/lukas-hetzenecker/home-assistant-remote.svg?style=for-the-badge
-[maintenance-shield]: https://img.shields.io/badge/maintainer-lukas--hetzenecker-blue.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/xtimmy86x/remote_homeassistant.svg?style=for-the-badge
+[maintenance-shield]: https://img.shields.io/badge/maintainer-xtimmy86x-blue.svg?style=for-the-badge
