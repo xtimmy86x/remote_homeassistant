@@ -6,12 +6,11 @@ from unittest.mock import AsyncMock
 import pytest
 import voluptuous as vol
 from homeassistant.config_entries import SOURCE_USER
-from homeassistant.const import CONF_ACCESS_TOKEN, CONF_TYPE
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.const import CONF_ACCESS_TOKEN
+from homeassistant.data_entry_flow import FlowResultType, section
 from homeassistant.helpers.selector import SelectSelector
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.remote_homeassistant.config_flow import CONF_MAIN
 from custom_components.remote_homeassistant.const import (
     CONF_REMOTE_CONNECTION,
     DOMAIN,
@@ -19,8 +18,16 @@ from custom_components.remote_homeassistant.const import (
 
 
 def selectors(form):
-    """Extract selectors by field name from a flow form."""
-    return {marker.schema: value for marker, value in form["data_schema"].schema.items()}
+    """Extract selectors by field name from a flow form, including sections."""
+    found = {}
+    for marker, value in form["data_schema"].schema.items():
+        if isinstance(value, section):
+            found.update(
+                {inner.schema: sel for inner, sel in value.schema.schema.items()}
+            )
+        else:
+            found[marker.schema] = value
+    return found
 
 
 @pytest.mark.asyncio
@@ -41,8 +48,9 @@ async def test_initial_flow_searches_remote_entities(
     form = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
+    assert form["type"] is FlowResultType.MENU
     form = await hass.config_entries.flow.async_configure(
-        form["flow_id"], {CONF_TYPE: CONF_MAIN}
+        form["flow_id"], {"next_step_id": "connection_details"}
     )
     form = await hass.config_entries.flow.async_configure(
         form["flow_id"],
@@ -50,9 +58,8 @@ async def test_initial_flow_searches_remote_entities(
             "host": "remote.invalid",
             "port": 8123,
             CONF_ACCESS_TOKEN: "token",
-            "max_message_size": 1024,
             "secure": False,
-            "verify_ssl": False,
+            "advanced": {"max_message_size": 1024, "verify_ssl": False},
         },
     )
 
@@ -65,10 +72,15 @@ async def test_initial_flow_searches_remote_entities(
     with pytest.raises(vol.Invalid):
         selectors(form)["include_entities"](["sensor.not_on_remote"])
 
+    assert form["description_placeholders"] == {"count": "3000"}
+
     result = await hass.config_entries.flow.async_configure(
-        form["flow_id"], {"include_entities": ["sensor.remote_2048"]}
+        form["flow_id"],
+        {"include": {"include_entities": ["sensor.remote_2048"]}, "exclude": {}},
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["max_message_size"] == 1024
+    assert result["data"]["verify_ssl"] is False
     assert result["data"]["options"]["include_entities"] == ["sensor.remote_2048"]
 
 
@@ -76,7 +88,7 @@ async def test_initial_flow_searches_remote_entities(
 async def test_options_flow_searches_services_and_accepts_new_events(
     hass, enable_custom_integrations
 ):
-    """Saved offline choices stay selectable and events need only one submit."""
+    """Saved offline choices stay selectable and each menu group saves alone."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="1234567890abcdef1234567890abcdef",
@@ -92,32 +104,52 @@ async def test_options_flow_searches_services_and_accepts_new_events(
     entry.add_to_hass(hass)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         CONF_REMOTE_CONNECTION: SimpleNamespace(
-            _all_entity_names={"sensor.current"},
+            _all_entity_names={"sensor.current", "climate.hall", "light.desk"},
             proxy_services=SimpleNamespace(services=["light.turn_on"]),
         )
     }
 
-    form = await hass.config_entries.options.async_init(entry.entry_id)
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    assert menu["type"] is FlowResultType.MENU
+    assert menu["menu_options"] == ["entities", "naming", "services", "events"]
+    assert menu["description_placeholders"] == {
+        "selected": "1", "total": "3", "filters": "0"
+    }
+
+    form = await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "services"}
+    )
     service_selector = selectors(form)["services"]
     assert isinstance(service_selector, SelectSelector)
     assert service_selector.config["options"] == ["light.turn_on", "switch.legacy"]
     service_selector(["switch.legacy"])
-
-    form = await hass.config_entries.options.async_configure(
+    result = await hass.config_entries.options.async_configure(
         form["flow_id"], {"service_prefix": "remote_", "services": ["switch.legacy"]}
     )
-    assert form["step_id"] == "domain_entity_filters"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["service_prefix"] == "remote_"
+    # Groups not shown in the form keep their saved values.
+    assert entry.options["include_entities"] == ["sensor.old"]
+
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "entities"}
+    )
     assert selectors(form)["include_entities"].config["options"] == [
-        "sensor.current", "sensor.old"
+        "climate.hall", "light.desk", "sensor.current", "sensor.old"
     ]
     assert "climate" in selectors(form)["include_domains"].config["options"]
-
-    form = await hass.config_entries.options.async_configure(
+    result = await hass.config_entries.options.async_configure(
         form["flow_id"],
-        {"include_entities": ["sensor.old"], "include_domains": ["climate"]},
+        {"include": {"include_domains": ["climate", "light"]}, "exclude": {}},
     )
-    form = await hass.config_entries.options.async_configure(form["flow_id"], {})
-    assert form["step_id"] == "events"
+    assert entry.options["include_domains"] == ["climate", "light"]
+    assert entry.options["include_entities"] == []
+
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    form = await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "events"}
+    )
     event_selector = selectors(form)["subscribe_events"]
     assert event_selector.config["multiple"] is True
     assert event_selector.config["custom_value"] is True
@@ -130,3 +162,4 @@ async def test_options_flow_searches_services_and_accepts_new_events(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["subscribe_events"] == ["existing_event", "new_event"]
+    assert entry.options["services"] == ["switch.legacy"]

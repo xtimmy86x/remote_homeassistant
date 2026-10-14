@@ -12,6 +12,7 @@ import fnmatch
 import inspect
 import logging
 import re
+from types import MappingProxyType
 
 import aiohttp
 from aiohttp import ClientWebSocketResponse
@@ -23,7 +24,7 @@ try:
 except (ModuleNotFoundError, ImportError):
     # hass 2024.10 or older
     from homeassistant.config import DATA_CUSTOMIZE
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry, ConfigSubentry
 from homeassistant.const import (CONF_ABOVE, CONF_ACCESS_TOKEN, CONF_BELOW,
                                  CONF_DOMAINS, CONF_ENTITIES, CONF_ENTITY_ID,
                                  CONF_EXCLUDE, CONF_HOST, CONF_INCLUDE,
@@ -58,7 +59,8 @@ from .const import (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES,
                     CONF_INCLUDE_DOMAINS, CONF_INCLUDE_ENTITIES,
                     CONF_LOAD_COMPONENTS, CONF_OPTIONS, CONF_REMOTE_CONNECTION,
                     CONF_SERVICE_PREFIX, CONF_SERVICES, CONF_UNSUB_LISTENER,
-                    DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN)
+                    DOMAIN, REMOTE_ID, DEFAULT_MAX_MSG_SIZE, ATTR_REMOTE_ORIGIN,
+                    SUBENTRY_TYPE_FILTER)
 from .proxy_services import ProxyServices
 from .remote_registry import RemoteRegistrySync
 from .rest_api import InvalidAuth, UnsupportedVersion, async_get_discovery_info
@@ -164,6 +166,27 @@ REGISTRY_COMMANDS = (
 )
 
 
+def entity_selected(entity_id, include_entities, include_domains,
+                    exclude_entities, exclude_domains):
+    """Return whether include and exclude lists import an entity."""
+    domain = entity_id.split(".", 1)[0]
+    if entity_id in exclude_entities or domain in exclude_domains:
+        return False
+    if include_entities or include_domains:
+        return entity_id in include_entities or domain in include_domains
+    return True
+
+
+@callback
+def async_entry_filters(entry: ConfigEntry):
+    """Return attribute filters from subentries and YAML options."""
+    return [
+        dict(subentry.data)
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_FILTER
+    ] + list(entry.options.get(CONF_FILTER, []))
+
+
 def async_yaml_to_config_entry(instance_conf):
     """Convert YAML config into data and options used by a config entry."""
     conf = instance_conf.copy()
@@ -261,6 +284,44 @@ async def async_setup(hass: HomeAssistant.core.HomeAssistant, config: ConfigType
         )
 
     return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Move attribute filters from options into editable subentries."""
+    if entry.version > 1:
+        return False
+
+    if entry.minor_version < 2:
+        options = dict(entry.options)
+        # YAML reloads rewrite options, so YAML filters stay where they are.
+        if entry.source != SOURCE_IMPORT:
+            for filter_conf in options.pop(CONF_FILTER, []):
+                hass.config_entries.async_add_subentry(
+                    entry,
+                    ConfigSubentry(
+                        data=MappingProxyType(dict(filter_conf)),
+                        subentry_type=SUBENTRY_TYPE_FILTER,
+                        title=filter_title(filter_conf),
+                        unique_id=None,
+                    ),
+                )
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=2
+        )
+
+    return True
+
+
+def filter_title(filter_conf):
+    """Describe an attribute filter in one line."""
+    parts = [filter_conf.get(CONF_ENTITY_ID) or "*"]
+    if filter_conf.get(CONF_UNIT_OF_MEASUREMENT):
+        parts.append(filter_conf[CONF_UNIT_OF_MEASUREMENT])
+    if filter_conf.get(CONF_ABOVE) is not None:
+        parts.append(f"> {filter_conf[CONF_ABOVE]:g}")
+    if filter_conf.get(CONF_BELOW) is not None:
+        parts.append(f"< {filter_conf[CONF_BELOW]:g}")
+    return ", ".join(parts)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -379,7 +440,7 @@ class RemoteConnection:
                 CONF_ABOVE: f.get(CONF_ABOVE),
                 CONF_BELOW: f.get(CONF_BELOW),
             }
-            for f in config_entry.options.get(CONF_FILTER, [])
+            for f in async_entry_filters(config_entry)
         ]
 
         self._subscribe_events = set(
@@ -1010,8 +1071,6 @@ class RemoteConnection:
 
         def state_changed(entity_id, state, attr):
             """Publish remote state change on local instance."""
-            domain, _object_id = split_entity_id(entity_id)
-
             if attr.get(ATTR_REMOTE_ORIGIN):
                 self._remote_imports.add(entity_id)
                 self._all_entity_names.discard(entity_id)
@@ -1021,13 +1080,12 @@ class RemoteConnection:
             self._remote_imports.discard(entity_id)
             self._all_entity_names.add(entity_id)
 
-            if entity_id in self._blacklist_e or domain in self._blacklist_d:
-                return
-
-            if (
-                (self._whitelist_e or self._whitelist_d)
-                and entity_id not in self._whitelist_e
-                and domain not in self._whitelist_d
+            if not entity_selected(
+                entity_id,
+                self._whitelist_e,
+                self._whitelist_d,
+                self._blacklist_e,
+                self._blacklist_d,
             ):
                 return
 
@@ -1040,7 +1098,7 @@ class RemoteConnection:
                     if f[CONF_UNIT_OF_MEASUREMENT] != attr[CONF_UNIT_OF_MEASUREMENT]:
                         continue
                 try:
-                    if f[CONF_BELOW] and float(state) < f[CONF_BELOW]:
+                    if f[CONF_BELOW] is not None and float(state) < f[CONF_BELOW]:
                         _LOGGER.info(
                             "%s: ignoring state '%s', because below '%s'",
                             entity_id,
@@ -1048,7 +1106,7 @@ class RemoteConnection:
                             f[CONF_BELOW],
                         )
                         return
-                    if f[CONF_ABOVE] and float(state) > f[CONF_ABOVE]:
+                    if f[CONF_ABOVE] is not None and float(state) > f[CONF_ABOVE]:
                         _LOGGER.info(
                             "%s: ignoring state '%s', because above '%s'",
                             entity_id,

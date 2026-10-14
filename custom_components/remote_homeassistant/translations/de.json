@@ -4,18 +4,74 @@
     "step": {
       "user": {
         "title": "Installationstyp wählen",
-        "description": "Der Remote Node ist die Instanz, von der die Daten gesammelt werden"
+        "description": "Wählen Sie, ob diese Instanz Zustände einer anderen Instanz importiert oder ob sich andere Instanzen mit ihr verbinden dürfen.",
+        "menu_options": {
+          "connection_details": "Remote Node hinzufügen",
+          "remote_node": "Als Remote Node einrichten"
+        }
       },
       "connection_details": {
         "title": "Verbindungsdetails",
         "data": {
           "host": "Host",
           "port": "Port",
-          "secure": "Sicher",
-          "verify_ssl": "SSL verifizieren",
           "access_token": "Verbindungstoken",
-          "max_message_size": "Maximale Nachrichtengröße"
+          "secure": "Sicher (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Erweiterte Verbindungseinstellungen",
+            "data": {
+              "verify_ssl": "SSL verifizieren",
+              "max_message_size": "Maximale Nachrichtengröße"
+            }
+          }
         }
+      },
+      "entity_selection": {
+        "title": "Remote-Entitäten wählen",
+        "description": "Die Remote-Instanz stellt {count} Entitäten bereit. Wählen Sie die zu importierenden Domains oder Entitäten. Ausschlüsse haben Vorrang. Um alles zu importieren, wählen Sie Alle Entitäten importieren.",
+        "data": {
+          "import_all": "Alle Entitäten importieren",
+          "entity_prefix": "Entitätspräfix (optional)",
+          "entity_friendly_name_prefix": "Präfix für Entitätsnamen (optional)"
+        },
+        "sections": {
+          "include": {
+            "name": "Einbeziehen",
+            "data": {
+              "include_domains": "Domains einbeziehen",
+              "include_entities": "Entitäten einbeziehen"
+            }
+          },
+          "exclude": {
+            "name": "Ausschließen",
+            "description": "Ausgeschlossene Domains und Entitäten werden nie importiert, auch wenn sie einbezogen sind.",
+            "data": {
+              "exclude_domains": "Domains ausschließen",
+              "exclude_entities": "Entitäten ausschließen"
+            }
+          }
+        }
+      },
+      "reconfigure": {
+        "title": "Verbindung zu {name} ändern",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "access_token": "Verbindungstoken",
+          "secure": "Sicher (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Erweiterte Verbindungseinstellungen",
+            "data": {
+              "verify_ssl": "SSL verifizieren",
+              "max_message_size": "Maximale Nachrichtengröße"
+            }
+          }
+        },
+        "description": "Lassen Sie den Verbindungstoken leer, um den gespeicherten beizubehalten."
       }
     },
     "error": {
@@ -27,48 +83,107 @@
       "missing_endpoint": "Sie müssen Remote Home Assistant auf diesem Host installieren und remote_homeassistant: zu seiner Konfiguration hinzufügen."
     },
     "abort": {
-      "already_configured": "Bereits konfiguriert"
+      "already_configured": "Bereits konfiguriert",
+      "not_supported": "Für einen Remote Node werden keine Einstellungen unterstützt",
+      "yaml_managed": "Diese Verbindung ist in YAML definiert. Ändern Sie sie in der configuration.yaml.",
+      "reconfigure_successful": "Die Verbindungseinstellungen wurden gespeichert."
+    }
+  },
+  "config_subentries": {
+    "filter": {
+      "entry_type": "Attributfilter",
+      "initiate_flow": {
+        "user": "Filter hinzufügen"
+      },
+      "step": {
+        "user": {
+          "title": "Attributfilter",
+          "description": "Zustandsänderungen passender Entitäten ignorieren, wenn der Wert außerhalb der Grenzen liegt. Die Entitäts-ID akzeptiert Platzhalter wie `sensor.*_power`; leer lassen für alle Entitäten.",
+          "data": {
+            "entity_id": "Entitäts-ID",
+            "unit_of_measurement": "Maßeinheit",
+            "above": "Ignorieren über",
+            "below": "Ignorieren unter"
+          }
+        },
+        "reconfigure": {
+          "title": "Attributfilter bearbeiten",
+          "description": "Zustandsänderungen passender Entitäten ignorieren, wenn der Wert außerhalb der Grenzen liegt. Die Entitäts-ID akzeptiert Platzhalter wie `sensor.*_power`; leer lassen für alle Entitäten.",
+          "data": {
+            "entity_id": "Entitäts-ID",
+            "unit_of_measurement": "Maßeinheit",
+            "above": "Ignorieren über",
+            "below": "Ignorieren unter"
+          }
+        }
+      },
+      "error": {
+        "missing_limit": "Legen Sie mindestens eine Grenze fest: Ignorieren über oder Ignorieren unter."
+      },
+      "abort": {
+        "reconfigure_successful": "Die Verbindungseinstellungen wurden gespeichert."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Basis-Einstellungen (Schritt 1/4)",
+        "title": "Remote-Einstellungen",
+        "description": "Importierte Entitäten: **{selected}** von {total}, die die Remote-Instanz derzeit meldet.\nAttributfilter: **{filters}**. Fügen Sie sie auf der Integrationsseite mit **Filter hinzufügen** hinzu oder bearbeiten Sie sie dort.",
+        "menu_options": {
+          "entities": "Domains und Entitäten",
+          "naming": "Entitätsnamen",
+          "services": "Remote Services",
+          "events": "Abonnierte Events"
+        }
+      },
+      "entities": {
+        "title": "Domains und Entitäten",
+        "description": "Mit der gespeicherten Auswahl werden **{selected}** von {total} Remote-Entitäten importiert.",
+        "sections": {
+          "include": {
+            "name": "Einbeziehen",
+            "data": {
+              "include_domains": "Domains einbeziehen",
+              "include_entities": "Entitäten einbeziehen"
+            }
+          },
+          "exclude": {
+            "name": "Ausschließen",
+            "description": "Ausgeschlossene Domains und Entitäten werden nie importiert, auch wenn sie einbezogen sind.",
+            "data": {
+              "exclude_domains": "Domains ausschließen",
+              "exclude_entities": "Entitäten ausschließen"
+            }
+          }
+        }
+      },
+      "naming": {
+        "title": "Entitätsnamen",
+        "description": "Die Präfixe werden den Entitäts-IDs und Namen importierter Entitäten vorangestellt.",
         "data": {
           "entity_prefix": "Entitätspräfix (optional)",
-          "entity_friendly_name_prefix": "Entitätsname präfix (optional)",
-          "load_components": "Komponente laden (wenn nicht geladen)",
+          "entity_friendly_name_prefix": "Präfix für Entitätsnamen (optional)"
+        }
+      },
+      "services": {
+        "title": "Remote Services",
+        "data": {
           "service_prefix": "Servicepräfix",
-          "services": "Remote Services"
-        }
-      },
-      "domain_entity_filters": {
-        "title": "Domain- und Entitätsfilter (Schritt 2/4)",
-        "data": {
-          "include_domains": "Domains einbeziehen",
-          "include_entities": "Entitäten einbeziehen",
-          "exclude_domains": "Domains ausschließen",
-          "exclude_entities": "Entitäten ausschließen"
-        }
-      },
-      "general_filters": {
-        "title": "Filter (Schritt 3/4)",
-        "description": "Fügen Sie einen neuen Filter hinzu, indem Sie die „Entitäts-ID“, ein oder mehrere Filterattribute angeben und auf „Absenden“ klicken. Entfernen Sie vorhandene Filter, indem Sie sie unter „Filter“ deaktivieren.\n\nLassen Sie „Entitäts-ID“ leer und klicken Sie auf „Absenden“, um keine weiteren Änderungen vorzunehmen.",
-        "data": {
-          "filter": "Filter",
-          "entity_id": "Entitäts-ID",
-          "unit_of_measurement": "Maßeinheit",
-          "above": "Über",
-          "below": "Unter"
+          "services": "Remote Services",
+          "load_components": "Komponente laden (wenn nicht geladen)"
         }
       },
       "events": {
-        "title": "Abonnierte Events (Schritt 4/4)",
+        "title": "Abonnierte Events",
         "description": "Suchen Sie nach vorhandenen Events oder geben Sie unter „Events“ einen neuen Namen ein. Entfernen Sie ausgewählte Events und klicken Sie zum Speichern auf „Absenden“.",
         "data": {
           "subscribe_events": "Events"
         }
       }
+    },
+    "abort": {
+      "not_supported": "Für einen Remote Node werden keine Einstellungen unterstützt"
     }
   }
 }
