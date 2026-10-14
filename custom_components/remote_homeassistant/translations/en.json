@@ -4,30 +4,54 @@
     "step": {
       "user": {
         "title": "Select installation type",
-        "description": "The remote node is the instance on which the states are gathered from"
+        "description": "Choose whether this instance imports states from another instance, or lets other instances connect to it.",
+        "menu_options": {
+          "connection_details": "Add a remote node",
+          "remote_node": "Set up as remote node"
+        }
       },
       "connection_details": {
         "title": "Connection details",
         "data": {
           "host": "Host",
           "port": "Port",
-          "secure": "Secure",
-          "verify_ssl": "Verify SSL",
           "access_token": "Access token",
-          "max_message_size": "Maximum Message Size"
+          "secure": "Secure (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced connection settings",
+            "data": {
+              "verify_ssl": "Verify SSL",
+              "max_message_size": "Maximum message size"
+            }
+          }
         }
       },
       "entity_selection": {
         "title": "Choose remote entities",
-        "description": "Select the domains or entities to import before the first connection. Exclusions take precedence. To import everything, select Import all entities.",
+        "description": "The remote instance exposes {count} entities. Select the domains or entities to import. Exclusions take precedence. To import everything, select Import all entities.",
         "data": {
           "import_all": "Import all entities",
-          "include_domains": "Include domains",
-          "include_entities": "Include entities",
-          "exclude_domains": "Exclude domains",
-          "exclude_entities": "Exclude entities",
           "entity_prefix": "Entity prefix (optional)",
           "entity_friendly_name_prefix": "Entity name prefix (optional)"
+        },
+        "sections": {
+          "include": {
+            "name": "Include",
+            "data": {
+              "include_domains": "Include domains",
+              "include_entities": "Include entities"
+            }
+          },
+          "exclude": {
+            "name": "Exclude",
+            "description": "Excluded domains and entities are never imported, even if included.",
+            "data": {
+              "exclude_domains": "Exclude domains",
+              "exclude_entities": "Exclude entities"
+            }
+          }
         }
       },
       "reauth_confirm": {
@@ -36,6 +60,25 @@
         "data": {
           "access_token": "New access token"
         }
+      },
+      "reconfigure": {
+        "title": "Change connection to {name}",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "access_token": "Access token",
+          "secure": "Secure (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced connection settings",
+            "data": {
+              "verify_ssl": "Verify SSL",
+              "max_message_size": "Maximum message size"
+            }
+          }
+        },
+        "description": "Leave the access token empty to keep the saved one."
       }
     },
     "error": {
@@ -50,43 +93,99 @@
     "abort": {
       "already_configured": "Already configured",
       "reauth_successful": "Reauthentication successful. The remote connection is using the new token.",
-      "wrong_instance": "The token belongs to a different remote Home Assistant instance."
+      "wrong_instance": "The token belongs to a different remote Home Assistant instance.",
+      "not_supported": "No configuration options supported for a remote node",
+      "yaml_managed": "This connection is defined in YAML. Change it in configuration.yaml.",
+      "reconfigure_successful": "The connection settings were saved."
+    }
+  },
+  "config_subentries": {
+    "filter": {
+      "entry_type": "Attribute filter",
+      "initiate_flow": {
+        "user": "Add filter"
+      },
+      "step": {
+        "user": {
+          "title": "Attribute filter",
+          "description": "Ignore state updates of matching entities when the value is outside the limits. Entity ID accepts wildcards such as `sensor.*_power`; leave it empty to match all entities.",
+          "data": {
+            "entity_id": "Entity ID",
+            "unit_of_measurement": "Unit of measurement",
+            "above": "Ignore above",
+            "below": "Ignore below"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit attribute filter",
+          "description": "Ignore state updates of matching entities when the value is outside the limits. Entity ID accepts wildcards such as `sensor.*_power`; leave it empty to match all entities.",
+          "data": {
+            "entity_id": "Entity ID",
+            "unit_of_measurement": "Unit of measurement",
+            "above": "Ignore above",
+            "below": "Ignore below"
+          }
+        }
+      },
+      "error": {
+        "missing_limit": "Set at least one limit: Ignore above or Ignore below."
+      },
+      "abort": {
+        "reconfigure_successful": "The connection settings were saved."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Basic Options (step 1/4)",
+        "title": "Remote options",
+        "description": "Imported entities: **{selected}** of {total} currently reported by the remote.\nAttribute filters: **{filters}**. Add or edit them from the integration page with **Add filter**.",
+        "menu_options": {
+          "entities": "Domains and entities",
+          "naming": "Entity naming",
+          "services": "Remote services",
+          "events": "Subscribed events"
+        }
+      },
+      "entities": {
+        "title": "Domains and entities",
+        "description": "With the saved selection, **{selected}** of {total} remote entities are imported.",
+        "sections": {
+          "include": {
+            "name": "Include",
+            "data": {
+              "include_domains": "Include domains",
+              "include_entities": "Include entities"
+            }
+          },
+          "exclude": {
+            "name": "Exclude",
+            "description": "Excluded domains and entities are never imported, even if included.",
+            "data": {
+              "exclude_domains": "Exclude domains",
+              "exclude_entities": "Exclude entities"
+            }
+          }
+        }
+      },
+      "naming": {
+        "title": "Entity naming",
+        "description": "Prefixes are added to the entity IDs and names of imported entities.",
         "data": {
           "entity_prefix": "Entity prefix (optional)",
-          "entity_friendly_name_prefix": "Entity name prefix (optional)",
-          "load_components": "Load component (if not loaded)",
+          "entity_friendly_name_prefix": "Entity name prefix (optional)"
+        }
+      },
+      "services": {
+        "title": "Remote services",
+        "data": {
           "service_prefix": "Service prefix",
-          "services": "Remote Services"
-        }
-      },
-      "domain_entity_filters": {
-        "title": "Domain and entity filters (step 2/4)",
-        "data": {
-          "include_domains": "Include domains",
-          "include_entities": "Include entities",
-          "exclude_domains": "Exclude domains",
-          "exclude_entities": "Exclude entities"
-        }
-      },
-      "general_filters": {
-        "title": "Filters (step 3/4)",
-        "description": "Add a new filter by specifying `Entity ID`, one or more filter attributes and press `Submit`. Remove existing filters by unticking them in `Filters`.\n\nLeave `Entity ID` empty and press `Submit` to make no further changes.",
-        "data": {
-          "filter": "Filters",
-          "entity_id": "Entity ID",
-          "unit_of_measurement": "Unit of measurement",
-          "above": "Above",
-          "below": "Below"
+          "services": "Remote services",
+          "load_components": "Load component (if not loaded)"
         }
       },
       "events": {
-        "title": "Subscribed events (step 4/4)",
+        "title": "Subscribed events",
         "description": "Search for existing events or type a new event name in Events. Remove a selected event using its chip, then submit to save.",
         "data": {
           "subscribe_events": "Events"

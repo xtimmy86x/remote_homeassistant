@@ -4,18 +4,74 @@
     "step": {
       "user": {
         "title": "Selecione o tipo de instalação",
-        "description": "O nó remoto é a instância na qual os estados são coletados de"
+        "description": "Escolha se esta instância importa estados de outra instância ou permite que outras instâncias se conectem a ela.",
+        "menu_options": {
+          "connection_details": "Adicionar um nó remoto",
+          "remote_node": "Configurar como nó remoto"
+        }
       },
       "connection_details": {
         "title": "Detalhes da conexão",
         "data": {
           "host": "Host",
           "port": "Porta",
-          "secure": "Protegido",
-          "verify_ssl": "Verificar SSL",
           "access_token": "Token de acesso",
-          "max_message_size": "Tamanho máximo da mensagem"
+          "secure": "Protegido (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Configurações avançadas de conexão",
+            "data": {
+              "verify_ssl": "Verificar SSL",
+              "max_message_size": "Tamanho máximo da mensagem"
+            }
+          }
         }
+      },
+      "entity_selection": {
+        "title": "Escolha as entidades remotas",
+        "description": "A instância remota expõe {count} entidades. Selecione os domínios ou entidades a importar. As exclusões têm precedência. Para importar tudo, selecione Importar todas as entidades.",
+        "data": {
+          "import_all": "Importar todas as entidades",
+          "entity_prefix": "Prefixo da entidade (opcional)",
+          "entity_friendly_name_prefix": "Prefixo do nome da entidade (opcional)"
+        },
+        "sections": {
+          "include": {
+            "name": "Incluir",
+            "data": {
+              "include_domains": "Incluir domínios",
+              "include_entities": "Incluir entidades"
+            }
+          },
+          "exclude": {
+            "name": "Excluir",
+            "description": "Domínios e entidades excluídos nunca são importados, mesmo se incluídos.",
+            "data": {
+              "exclude_domains": "Excluir domínios",
+              "exclude_entities": "Excluir entidades"
+            }
+          }
+        }
+      },
+      "reconfigure": {
+        "title": "Alterar a conexão com {name}",
+        "data": {
+          "host": "Host",
+          "port": "Porta",
+          "access_token": "Token de acesso",
+          "secure": "Protegido (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Configurações avançadas de conexão",
+            "data": {
+              "verify_ssl": "Verificar SSL",
+              "max_message_size": "Tamanho máximo da mensagem"
+            }
+          }
+        },
+        "description": "Deixe o token de acesso vazio para manter o salvo."
       }
     },
     "error": {
@@ -27,48 +83,107 @@
       "missing_endpoint": "Você precisa instalar o Remote Home Assistant neste host e adicionar remote_homeassistant: à sua configuração."
     },
     "abort": {
-      "already_configured": "Já configurado"
+      "already_configured": "Já configurado",
+      "not_supported": "Nenhuma opção de configuração suportada para um nó remoto",
+      "yaml_managed": "Esta conexão está definida em YAML. Altere-a no configuration.yaml.",
+      "reconfigure_successful": "As configurações da conexão foram salvas."
+    }
+  },
+  "config_subentries": {
+    "filter": {
+      "entry_type": "Filtro de atributo",
+      "initiate_flow": {
+        "user": "Adicionar filtro"
+      },
+      "step": {
+        "user": {
+          "title": "Filtro de atributo",
+          "description": "Ignora atualizações de estado das entidades correspondentes quando o valor está fora dos limites. O ID da entidade aceita curingas como `sensor.*_power`; deixe vazio para todas as entidades.",
+          "data": {
+            "entity_id": "ID da entidade",
+            "unit_of_measurement": "Unidade de medida",
+            "above": "Ignorar acima de",
+            "below": "Ignorar abaixo de"
+          }
+        },
+        "reconfigure": {
+          "title": "Editar filtro de atributo",
+          "description": "Ignora atualizações de estado das entidades correspondentes quando o valor está fora dos limites. O ID da entidade aceita curingas como `sensor.*_power`; deixe vazio para todas as entidades.",
+          "data": {
+            "entity_id": "ID da entidade",
+            "unit_of_measurement": "Unidade de medida",
+            "above": "Ignorar acima de",
+            "below": "Ignorar abaixo de"
+          }
+        }
+      },
+      "error": {
+        "missing_limit": "Defina pelo menos um limite: Ignorar acima de ou Ignorar abaixo de."
+      },
+      "abort": {
+        "reconfigure_successful": "As configurações da conexão foram salvas."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Opções básicas (passo 1/4)",
+        "title": "Opções do remoto",
+        "description": "Entidades importadas: **{selected}** de {total} informadas atualmente pelo remoto.\nFiltros de atributos: **{filters}**. Adicione ou edite-os na página da integração com **Adicionar filtro**.",
+        "menu_options": {
+          "entities": "Domínios e entidades",
+          "naming": "Nomes das entidades",
+          "services": "Serviços remotos",
+          "events": "Eventos inscritos"
+        }
+      },
+      "entities": {
+        "title": "Domínios e entidades",
+        "description": "Com a seleção salva, **{selected}** de {total} entidades remotas são importadas.",
+        "sections": {
+          "include": {
+            "name": "Incluir",
+            "data": {
+              "include_domains": "Incluir domínios",
+              "include_entities": "Incluir entidades"
+            }
+          },
+          "exclude": {
+            "name": "Excluir",
+            "description": "Domínios e entidades excluídos nunca são importados, mesmo se incluídos.",
+            "data": {
+              "exclude_domains": "Excluir domínios",
+              "exclude_entities": "Excluir entidades"
+            }
+          }
+        }
+      },
+      "naming": {
+        "title": "Nomes das entidades",
+        "description": "Os prefixos são adicionados aos IDs e nomes das entidades importadas.",
         "data": {
           "entity_prefix": "Prefixo da entidade (opcional)",
-          "entity_friendly_name_prefix": "Prefixo da entidade nombre (opcional)",
-          "load_components": "Carregar componente (se não estiver carregado)",
+          "entity_friendly_name_prefix": "Prefixo do nome da entidade (opcional)"
+        }
+      },
+      "services": {
+        "title": "Serviços remotos",
+        "data": {
           "service_prefix": "Prefixo do serviço",
-          "services": "Serviços remotos"
-        }
-      },
-      "domain_entity_filters": {
-        "title": "Filtros de domínio e entidade (etapa 2/4)",
-        "data": {
-          "include_domains": "Incluir domínios",
-          "include_entities": "Incluir entidades",
-          "exclude_domains": "Excluir domínios",
-          "exclude_entities": "Excluir entidades"
-        }
-      },
-      "general_filters": {
-        "title": "Filtros (etapa 3/4)",
-        "description": "Adicione um novo filtro especificando `ID da entidade`, um ou mais atributos de filtro e pressione `Enviar`. Remova os filtros existentes desmarcando-os em `Filtros`.\n\nDeixe `ID da entidade` vazio e pressione `Enviar` para não fazer mais alterações.",
-        "data": {
-          "filter": "Filtros",
-          "entity_id": "ID da entidade",
-          "unit_of_measurement": "Unidade de medida",
-          "above": "Acima de",
-          "below": "Abaixo de"
+          "services": "Serviços remotos",
+          "load_components": "Carregar componente (se não estiver carregado)"
         }
       },
       "events": {
-        "title": "Eventos inscritos (passo 4/4)",
+        "title": "Eventos inscritos",
         "description": "Pesquise eventos existentes ou digite um novo nome em Eventos. Para remover um evento, retire-o da seleção e pressione Enviar.",
         "data": {
           "subscribe_events": "Eventos"
         }
       }
+    },
+    "abort": {
+      "not_supported": "Nenhuma opção de configuração suportada para um nó remoto"
     }
   }
 }

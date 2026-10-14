@@ -1,13 +1,13 @@
 """Config flow for Remote Home-Assistant integration."""
 from __future__ import annotations
 import logging
-import enum
 from typing import Any, Mapping
 
 from urllib.parse import urlparse
 
 import voluptuous as vol
 from homeassistant import config_entries, core
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigSubentryFlow
 from homeassistant.const import (
     CONF_ABOVE,
     CONF_ACCESS_TOKEN,
@@ -20,8 +20,12 @@ from homeassistant.const import (
     CONF_TYPE,
 )
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers.instance_id import async_get
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -31,17 +35,15 @@ from homeassistant.helpers.selector import (
 )
 from homeassistant.util import slugify
 
-from . import async_yaml_to_config_entry
+from . import async_entry_filters, async_yaml_to_config_entry, entity_selected, filter_title
 from .const import (
     CONF_ENTITY_PREFIX,  # pylint:disable=unused-import
     CONF_ENTITY_FRIENDLY_NAME_PREFIX,
     CONF_EXCLUDE_DOMAINS,
     CONF_EXCLUDE_ENTITIES,
-    CONF_FILTER,
     CONF_INCLUDE_DOMAINS,
     CONF_INCLUDE_ENTITIES,
     CONF_LOAD_COMPONENTS,
-    CONF_MAIN,
     CONF_OPTIONS,
     CONF_REMOTE,
     CONF_REMOTE_CONNECTION,
@@ -53,6 +55,7 @@ from .const import (
     DOMAIN,
     REMOTE_ID,
     DEFAULT_MAX_MSG_SIZE,
+    SUBENTRY_TYPE_FILTER,
 )
 from .rest_api import (
     ApiProblem,
@@ -68,7 +71,11 @@ from .rest_api import (
 _LOGGER = logging.getLogger(__name__)
 
 CONF_IMPORT_ALL = "import_all"
+CONF_ADVANCED = "advanced"
+CONF_INCLUDE = "include"
+CONF_EXCLUDE = "exclude"
 
+ADVANCED_CONNECTION_OPTIONS = (CONF_VERIFY_SSL, CONF_MAX_MSG_SIZE)
 FILTER_OPTIONS = [CONF_ENTITY_ID, CONF_UNIT_OF_MEASUREMENT, CONF_ABOVE, CONF_BELOW]
 
 
@@ -84,12 +91,50 @@ def _searchable_multi_select(options, *, custom_value=False):
     )
 
 
-def _filter_str(index: int, filter_conf: Mapping[str, str | float]) -> str:
-    entity_id = filter_conf[CONF_ENTITY_ID]
-    unit = filter_conf[CONF_UNIT_OF_MEASUREMENT]
-    above = filter_conf[CONF_ABOVE]
-    below = filter_conf[CONF_BELOW]
-    return f"{index + 1}. {entity_id}, unit: {unit}, above: {above}, below: {below}"
+def _connection_schema(*, token_required: bool) -> vol.Schema:
+    """Return connection fields, with rarely changed ones in a folded section."""
+    token = vol.Required if token_required else vol.Optional
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST): str,
+            vol.Required(CONF_PORT): int,
+            token(CONF_ACCESS_TOKEN): TextSelector(
+                TextSelectorConfig(type=TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(CONF_SECURE): bool,
+            vol.Required(CONF_ADVANCED): section(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_VERIFY_SSL): bool,
+                        vol.Required(CONF_MAX_MSG_SIZE): int,
+                    }
+                ),
+                {"collapsed": True},
+            ),
+        }
+    )
+
+
+def _connection_values(conf: Mapping[str, Any]) -> dict[str, Any]:
+    """Nest stored connection data the way the connection form shows it."""
+    values = {
+        key: value
+        for key, value in conf.items()
+        if key in (CONF_HOST, CONF_PORT, CONF_ACCESS_TOKEN, CONF_SECURE)
+    }
+    values[CONF_ADVANCED] = {
+        key: conf[key] for key in ADVANCED_CONNECTION_OPTIONS if key in conf
+    }
+    return values
+
+
+def _flatten_connection(user_input: Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten connection form input into config entry data."""
+    data = {k: v for k, v in user_input.items() if k != CONF_ADVANCED}
+    data.update(user_input.get(CONF_ADVANCED, {}))
+    data.setdefault(CONF_SECURE, False)
+    data.setdefault(CONF_VERIFY_SSL, False)
+    return data
 
 
 async def validate_input(hass: core.HomeAssistant, conf):
@@ -109,17 +154,45 @@ async def validate_input(hass: core.HomeAssistant, conf):
     return {"title": info["location_name"], "uuid": info["uuid"]}
 
 
-class InstanceType(enum.Enum):
-    """Possible options for instance type."""
+async def _async_validate_connection(hass: core.HomeAssistant, conf):
+    """Check discovery and state access, returning errors or remote details."""
+    try:
+        info = await validate_input(hass, conf)
+        entities = await async_get_remote_entity_ids(
+            hass,
+            conf[CONF_HOST],
+            conf[CONF_PORT],
+            conf.get(CONF_SECURE, False),
+            conf[CONF_ACCESS_TOKEN],
+            conf.get(CONF_VERIFY_SSL, True),
+        )
+    except InvalidAuth:
+        return {"base": "invalid_auth"}, None, []
+    except CannotConnect:
+        return {"base": "cannot_connect"}, None, []
+    except EndpointMissing:
+        return {"base": "missing_endpoint"}, None, []
+    except UnsupportedVersion:
+        return {"base": "unsupported_version"}, None, []
+    except (ApiProblem, BadResponse):
+        return {"base": "api_problem"}, None, []
+    except Exception:  # pylint: disable=broad-except
+        _LOGGER.exception("Unexpected error validating the remote connection")
+        return {"base": "unknown"}, None, []
+    return {}, info, entities
 
-    remote = "Setup as remote node"
-    main = "Add a remote"
+
+@callback
+def _remote_connection(hass: core.HomeAssistant, entry_id: str):
+    """Return the running connection of an entry, if it is loaded."""
+    return hass.data.get(DOMAIN, {}).get(entry_id, {}).get(CONF_REMOTE_CONNECTION)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Remote Home-Assistant."""
 
     VERSION = 1
+    MINOR_VERSION = 2
     CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_PUSH
 
     def __init__(self):
@@ -127,6 +200,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.prefill = {
             CONF_PORT: 8123,
             CONF_SECURE: True,
+            CONF_VERIFY_SSL: True,
             CONF_MAX_MSG_SIZE: DEFAULT_MAX_MSG_SIZE,
         }
         self._connection_data: dict[str, Any] | None = None
@@ -140,6 +214,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # config_entry internally set by OptionsFlow (read-only Property)
         return OptionsFlowHandler()
 
+    @classmethod
+    @callback
+    def async_supports_options_flow(cls, config_entry) -> bool:
+        """Hide the configure button on the remote node entry."""
+        return config_entry.unique_id != REMOTE_ID
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(cls, config_entry):
+        """Offer attribute filters on connections to a remote instance."""
+        if config_entry.unique_id == REMOTE_ID:
+            return {}
+        return {SUBENTRY_TYPE_FILTER: FilterSubentryFlowHandler}
+
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
         """Ask for a replacement token when the remote rejects the current one."""
         return await self.async_step_reauth_confirm()
@@ -150,30 +238,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             entry = self._get_reauth_entry()
             data = {**entry.data, CONF_ACCESS_TOKEN: user_input[CONF_ACCESS_TOKEN]}
-            try:
-                info = await validate_input(self.hass, data)
-                await async_get_remote_entity_ids(
-                    self.hass,
-                    data[CONF_HOST],
-                    data[CONF_PORT],
-                    data.get(CONF_SECURE, False),
-                    data[CONF_ACCESS_TOKEN],
-                    data.get(CONF_VERIFY_SSL, True),
-                )
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except EndpointMissing:
-                errors["base"] = "missing_endpoint"
-            except UnsupportedVersion:
-                errors["base"] = "unsupported_version"
-            except (ApiProblem, BadResponse):
-                errors["base"] = "api_problem"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected error validating replacement token")
-                errors["base"] = "unknown"
-            else:
+            errors, info, _ = await _async_validate_connection(self.hass, data)
+            if not errors:
                 await self.async_set_unique_id(info["uuid"])
                 self._abort_if_unique_id_mismatch(reason="wrong_instance")
                 # The existing update listener reloads the entry once.
@@ -192,92 +258,75 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
+    async def async_step_reconfigure(self, user_input=None):
+        """Change host, port, token or TLS settings of an existing connection."""
+        entry = self._get_reconfigure_entry()
+        if entry.unique_id == REMOTE_ID:
+            return self.async_abort(reason="not_supported")
+        if entry.source == SOURCE_IMPORT:
+            return self.async_abort(reason="yaml_managed")
+
         errors: dict[str, str] = {}
-
         if user_input is not None:
-            if user_input[CONF_TYPE] == CONF_REMOTE:
-                await self.async_set_unique_id(REMOTE_ID)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title="Remote instance", data=user_input
-                )
+            data = {**entry.data, **_flatten_connection(user_input)}
+            # An empty token field keeps the saved token.
+            if not data.get(CONF_ACCESS_TOKEN):
+                data[CONF_ACCESS_TOKEN] = entry.data[CONF_ACCESS_TOKEN]
+            errors, info, _ = await _async_validate_connection(self.hass, data)
+            if not errors:
+                await self.async_set_unique_id(info["uuid"])
+                self._abort_if_unique_id_mismatch(reason="wrong_instance")
+                # The existing update listener reloads the entry once.
+                return self.async_update_and_abort(entry, data=data)
 
-            elif user_input[CONF_TYPE] == CONF_MAIN:
-                return await self.async_step_connection_details()
-
-            errors["base"] = "unknown"
-
+        values = _connection_values(
+            {**entry.data, **(_flatten_connection(user_input) if user_input else {})}
+        )
+        values.pop(CONF_ACCESS_TOKEN, None)
         return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {vol.Required(CONF_TYPE): vol.In([CONF_REMOTE, CONF_MAIN])}
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                _connection_schema(token_required=False), values
             ),
+            description_placeholders={"name": entry.title},
             errors=errors,
+        )
+
+    async def async_step_user(self, user_input=None):
+        """Let the user choose which side of the connection this instance is."""
+        return self.async_show_menu(
+            step_id="user", menu_options=["connection_details", "remote_node"]
+        )
+
+    async def async_step_remote_node(self, user_input=None):
+        """Allow other instances to connect to this one."""
+        await self.async_set_unique_id(REMOTE_ID)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Remote instance", data={CONF_TYPE: CONF_REMOTE}
         )
 
     async def async_step_connection_details(self, user_input=None):
         """Handle the connection details step."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                info = await validate_input(self.hass, user_input)
-                entities = await async_get_remote_entity_ids(
-                    self.hass,
-                    user_input[CONF_HOST],
-                    user_input[CONF_PORT],
-                    user_input.get(CONF_SECURE, False),
-                    user_input[CONF_ACCESS_TOKEN],
-                    user_input.get(CONF_VERIFY_SSL, True),
-                )
-            except (ApiProblem, BadResponse):
-                errors["base"] = "api_problem"
-            except CannotConnect:
-                errors["base"] = "cannot_connect"
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except UnsupportedVersion:
-                errors["base"] = "unsupported_version"
-            except EndpointMissing:
-                errors["base"] = "missing_endpoint"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
+            data = _flatten_connection(user_input)
+            errors, info, entities = await _async_validate_connection(self.hass, data)
+            if not errors:
                 await self.async_set_unique_id(info["uuid"])
                 self._abort_if_unique_id_configured()
-                self._connection_data = user_input.copy()
+                self._connection_data = data
                 self._remote_title = info["title"]
                 self._remote_entities = entities
                 return await self.async_step_entity_selection()
 
-        user_input = user_input or {}
-        host = user_input.get(CONF_HOST, self.prefill.get(CONF_HOST) or vol.UNDEFINED)
-        port = user_input.get(CONF_PORT, self.prefill.get(CONF_PORT) or vol.UNDEFINED)
-        secure = user_input.get(
-            CONF_SECURE, self.prefill.get(CONF_SECURE) or vol.UNDEFINED
-        )
-        max_msg_size = user_input.get(
-            CONF_MAX_MSG_SIZE, self.prefill.get(CONF_MAX_MSG_SIZE) or vol.UNDEFINED
+        values = _connection_values(
+            {**self.prefill, **(_flatten_connection(user_input) if user_input else {})}
         )
         return self.async_show_form(
             step_id="connection_details",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HOST, default=host): str,
-                    vol.Required(CONF_PORT, default=port): int,
-                    vol.Required(
-                        CONF_ACCESS_TOKEN,
-                        default=user_input.get(CONF_ACCESS_TOKEN, vol.UNDEFINED),
-                    ): str,
-                    vol.Required(CONF_MAX_MSG_SIZE, default=max_msg_size): int,
-                    vol.Optional(CONF_SECURE, default=secure): bool,
-                    vol.Optional(
-                        CONF_VERIFY_SSL,
-                        default=user_input.get(CONF_VERIFY_SSL, True),
-                    ): bool,
-                }
+            data_schema=self.add_suggested_values_to_schema(
+                _connection_schema(token_required=True), values
             ),
             errors=errors,
         )
@@ -290,8 +339,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             import_all = user_input.get(CONF_IMPORT_ALL, False)
-            include_domains = user_input.get(CONF_INCLUDE_DOMAINS, [])
-            include_entities = user_input.get(CONF_INCLUDE_ENTITIES, [])
+            include = user_input.get(CONF_INCLUDE, {})
+            exclude = user_input.get(CONF_EXCLUDE, {})
+            include_domains = include.get(CONF_INCLUDE_DOMAINS, [])
+            include_entities = include.get(CONF_INCLUDE_ENTITIES, [])
 
             if not import_all and not (include_domains or include_entities):
                 errors["base"] = "select_entities"
@@ -299,8 +350,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 options = {
                     CONF_INCLUDE_DOMAINS: [] if import_all else include_domains,
                     CONF_INCLUDE_ENTITIES: [] if import_all else include_entities,
-                    CONF_EXCLUDE_DOMAINS: user_input.get(CONF_EXCLUDE_DOMAINS, []),
-                    CONF_EXCLUDE_ENTITIES: user_input.get(CONF_EXCLUDE_ENTITIES, []),
+                    CONF_EXCLUDE_DOMAINS: exclude.get(CONF_EXCLUDE_DOMAINS, []),
+                    CONF_EXCLUDE_ENTITIES: exclude.get(CONF_EXCLUDE_ENTITIES, []),
                     CONF_ENTITY_PREFIX: user_input.get(CONF_ENTITY_PREFIX, ""),
                     CONF_ENTITY_FRIENDLY_NAME_PREFIX: user_input.get(
                         CONF_ENTITY_FRIENDLY_NAME_PREFIX, ""
@@ -310,44 +361,21 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = {**self._connection_data, CONF_OPTIONS: options}
                 return self.async_create_entry(title=self._remote_title, data=data)
 
-        user_input = user_input or {}
         domains = sorted(
             {entity.split(".", 1)[0] for entity in self._remote_entities}
         )
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_IMPORT_ALL): bool,
+                **_include_exclude_schema(domains, self._remote_entities),
+                vol.Optional(CONF_ENTITY_PREFIX): str,
+                vol.Optional(CONF_ENTITY_FRIENDLY_NAME_PREFIX): str,
+            }
+        )
         return self.async_show_form(
             step_id="entity_selection",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_IMPORT_ALL,
-                        default=user_input.get(CONF_IMPORT_ALL, False),
-                    ): bool,
-                    vol.Optional(
-                        CONF_INCLUDE_DOMAINS,
-                        default=user_input.get(CONF_INCLUDE_DOMAINS, []),
-                    ): _searchable_multi_select(domains),
-                    vol.Optional(
-                        CONF_INCLUDE_ENTITIES,
-                        default=user_input.get(CONF_INCLUDE_ENTITIES, []),
-                    ): _searchable_multi_select(self._remote_entities),
-                    vol.Optional(
-                        CONF_EXCLUDE_DOMAINS,
-                        default=user_input.get(CONF_EXCLUDE_DOMAINS, []),
-                    ): _searchable_multi_select(domains),
-                    vol.Optional(
-                        CONF_EXCLUDE_ENTITIES,
-                        default=user_input.get(CONF_EXCLUDE_ENTITIES, []),
-                    ): _searchable_multi_select(self._remote_entities),
-                    vol.Optional(
-                        CONF_ENTITY_PREFIX,
-                        default=user_input.get(CONF_ENTITY_PREFIX, ""),
-                    ): str,
-                    vol.Optional(
-                        CONF_ENTITY_FRIENDLY_NAME_PREFIX,
-                        default=user_input.get(CONF_ENTITY_FRIENDLY_NAME_PREFIX, ""),
-                    ): str,
-                }
-            ),
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            description_placeholders={"count": str(len(self._remote_entities))},
             errors=errors,
         )
 
@@ -372,6 +400,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_HOST: url.hostname,
             CONF_PORT: port,
             CONF_SECURE: url.scheme == "https",
+            CONF_VERIFY_SSL: True,
+            CONF_MAX_MSG_SIZE: DEFAULT_MAX_MSG_SIZE,
         }
 
         # pylint: disable=no-member # https://github.com/PyCQA/pylint/issues/3167
@@ -399,211 +429,270 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(title=f"{info['title']} (YAML)", data=conf)
 
 
+def _include_exclude_schema(domains, entities) -> dict:
+    """Return include and exclude pickers grouped in two sections."""
+    return {
+        vol.Required(CONF_INCLUDE): section(
+            vol.Schema(
+                {
+                    vol.Optional(CONF_INCLUDE_DOMAINS): _searchable_multi_select(domains),
+                    vol.Optional(CONF_INCLUDE_ENTITIES): _searchable_multi_select(entities),
+                }
+            )
+        ),
+        vol.Required(CONF_EXCLUDE): section(
+            vol.Schema(
+                {
+                    vol.Optional(CONF_EXCLUDE_DOMAINS): _searchable_multi_select(domains),
+                    vol.Optional(CONF_EXCLUDE_ENTITIES): _searchable_multi_select(entities),
+                }
+            ),
+            {"collapsed": True},
+        ),
+    }
+
+
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    """Handle options flow for the Home Assistant remote integration."""
+    """Handle options flow for the Home Assistant remote integration.
 
-    def __init__(self):
-        """Initialize remote_homeassistant options flow."""
-        # self.config_entry wird von Home Assistant gesetzt (read-only Property)
-        self.filters: list[Any] | None = None
-        self.options: dict[str, Any] | None = None
+    Each menu entry saves on its own, so one change needs one form.
+    """
 
-    async def async_step_init(
-        self, user_input: dict[str, str] | None = None
-    ):
-        """Manage basic options."""
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        """Show the option groups together with what they currently select."""
         if self.config_entry.unique_id == REMOTE_ID:
             return self.async_abort(reason="not_supported")
 
-        if user_input is not None:
-            self.options = user_input.copy()
-            return await self.async_step_domain_entity_filters()
-
-        domains, _ = self._domains_and_entities()
-        domains = set(
-            domains + self.config_entry.options.get(CONF_LOAD_COMPONENTS, [])
-        )
-
-        remote = self.hass.data[DOMAIN][self.config_entry.entry_id][
-            CONF_REMOTE_CONNECTION
-        ]
-
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_ENTITY_PREFIX,
-                        description={
-                            "suggested_value": self.config_entry.options.get(
-                                CONF_ENTITY_PREFIX
-                            )
-                        },
-                    ): str,
-                    vol.Optional(
-                        CONF_ENTITY_FRIENDLY_NAME_PREFIX,
-                        description={
-                            "suggested_value": self.config_entry.options.get(
-                                CONF_ENTITY_FRIENDLY_NAME_PREFIX
-                            )
-                        },
-                    ): str,
-                    vol.Optional(
-                        CONF_LOAD_COMPONENTS,
-                        default=self._default(CONF_LOAD_COMPONENTS),
-                    ): _searchable_multi_select(domains),
-                    vol.Required(
-                        CONF_SERVICE_PREFIX,
-                        default=self.config_entry.options.get(CONF_SERVICE_PREFIX)
-                        or slugify(self.config_entry.title),
-                    ): str,
-                    vol.Optional(
-                        CONF_SERVICES,
-                        default=self._default(CONF_SERVICES),
-                    ): _searchable_multi_select(
-                        remote.proxy_services.services
-                        + self.config_entry.options.get(CONF_SERVICES, [])
-                    ),
-                }
-            ),
+            menu_options=["entities", "naming", "services", "events"],
+            description_placeholders={
+                **self._selection_summary(self.config_entry.options),
+                "filters": str(len(async_entry_filters(self.config_entry))),
+            },
         )
 
-    async def async_step_domain_entity_filters(self, user_input=None):
-        """Manage domain and entity filters."""
-        if self.options is not None and user_input is not None:
-            self.options.update(user_input)
-            return await self.async_step_general_filters()
+    async def async_step_entities(self, user_input=None):
+        """Choose included and excluded domains and entities."""
+        if user_input is not None:
+            include = user_input.get(CONF_INCLUDE, {})
+            exclude = user_input.get(CONF_EXCLUDE, {})
+            return self._save(
+                {
+                    CONF_INCLUDE_DOMAINS: include.get(CONF_INCLUDE_DOMAINS, []),
+                    CONF_INCLUDE_ENTITIES: include.get(CONF_INCLUDE_ENTITIES, []),
+                    CONF_EXCLUDE_DOMAINS: exclude.get(CONF_EXCLUDE_DOMAINS, []),
+                    CONF_EXCLUDE_ENTITIES: exclude.get(CONF_EXCLUDE_ENTITIES, []),
+                }
+            )
 
+        options = self.config_entry.options
         domains, entities = self._domains_and_entities()
         return self.async_show_form(
-            step_id="domain_entity_filters",
-            data_schema=vol.Schema(
+            step_id="entities",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(_include_exclude_schema(domains, entities)),
                 {
-                    vol.Optional(
-                        CONF_INCLUDE_DOMAINS,
-                        default=self._default(CONF_INCLUDE_DOMAINS),
-                    ): _searchable_multi_select(domains),
-                    vol.Optional(
-                        CONF_INCLUDE_ENTITIES,
-                        default=self._default(CONF_INCLUDE_ENTITIES),
-                    ): _searchable_multi_select(entities),
-                    vol.Optional(
-                        CONF_EXCLUDE_DOMAINS,
-                        default=self._default(CONF_EXCLUDE_DOMAINS),
-                    ): _searchable_multi_select(domains),
-                    vol.Optional(
-                        CONF_EXCLUDE_ENTITIES,
-                        default=self._default(CONF_EXCLUDE_ENTITIES),
-                    ): _searchable_multi_select(entities),
+                    CONF_INCLUDE: {
+                        key: options[key]
+                        for key in (CONF_INCLUDE_DOMAINS, CONF_INCLUDE_ENTITIES)
+                        if key in options
+                    },
+                    CONF_EXCLUDE: {
+                        key: options[key]
+                        for key in (CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITIES)
+                        if key in options
+                    },
+                },
+            ),
+            description_placeholders=self._selection_summary(options),
+        )
+
+    async def async_step_naming(self, user_input=None):
+        """Set the prefixes added to imported entity IDs and names."""
+        if user_input is not None:
+            return self._save(
+                {
+                    CONF_ENTITY_PREFIX: user_input.get(CONF_ENTITY_PREFIX, ""),
+                    CONF_ENTITY_FRIENDLY_NAME_PREFIX: user_input.get(
+                        CONF_ENTITY_FRIENDLY_NAME_PREFIX, ""
+                    ),
                 }
+            )
+
+        return self.async_show_form(
+            step_id="naming",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_ENTITY_PREFIX): str,
+                        vol.Optional(CONF_ENTITY_FRIENDLY_NAME_PREFIX): str,
+                    }
+                ),
+                self.config_entry.options,
             ),
         )
 
-    async def async_step_general_filters(self, user_input=None):
-        """Manage general entity filters."""
+    async def async_step_services(self, user_input=None):
+        """Choose remote services to proxy and components to load locally."""
         if user_input is not None:
-            # Continue to next step if entity id is not specified
-            if CONF_ENTITY_ID not in user_input:
-                # Each filter string is prefixed with a number (index in self.filter+1).
-                # Extract all of them and build the final filter list.
-                selected_indices = [
-                    int(filter_item.split(".")[0]) - 1
-                    for filter_item in user_input.get(CONF_FILTER, [])
-                ]
-                if self.options is not None:
-                    self.options[CONF_FILTER] = [
-                        self.filters[i] for i in selected_indices  # type: ignore
-                    ]
-                return await self.async_step_events()
-
-            selected = user_input.get(CONF_FILTER, [])
-            new_filter = {conf: user_input.get(conf) for conf in FILTER_OPTIONS}
-
-            selected.append(_filter_str(len(self.filters), new_filter))  # type: ignore
-            self.filters.append(new_filter)  # type: ignore
-        else:
-            self.filters = self.config_entry.options.get(CONF_FILTER, [])
-            selected = [
-                _filter_str(i, filter_item)
-                for i, filter_item in enumerate(self.filters)  # type: ignore
-            ]
-
-        if self.filters is None:
-            self.filters = []
-        strings = [
-            _filter_str(i, filter_item)
-            for i, filter_item in enumerate(self.filters)
-        ]
-        return self.async_show_form(
-            step_id="general_filters",
-            data_schema=vol.Schema(
+            return self._save(
                 {
-                    vol.Optional(CONF_FILTER, default=selected): _searchable_multi_select(
-                        strings
-                    ),
-                    vol.Optional(CONF_ENTITY_ID): SelectSelector(
-                        SelectSelectorConfig(
-                            options=self._domains_and_entities()[1],
-                            mode=SelectSelectorMode.DROPDOWN,
-                            custom_value=True,
-                        )
-                    ),
-                    vol.Optional(CONF_UNIT_OF_MEASUREMENT): str,
-                    vol.Optional(CONF_ABOVE): vol.Coerce(float),
-                    vol.Optional(CONF_BELOW): vol.Coerce(float),
+                    CONF_LOAD_COMPONENTS: user_input.get(CONF_LOAD_COMPONENTS, []),
+                    CONF_SERVICE_PREFIX: user_input[CONF_SERVICE_PREFIX],
+                    CONF_SERVICES: user_input.get(CONF_SERVICES, []),
                 }
+            )
+
+        options = self.config_entry.options
+        domains, _ = self._domains_and_entities()
+        remote = _remote_connection(self.hass, self.config_entry.entry_id)
+        services = remote.proxy_services.services if remote else []
+        return self.async_show_form(
+            step_id="services",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Required(
+                            CONF_SERVICE_PREFIX,
+                            default=options.get(CONF_SERVICE_PREFIX)
+                            or slugify(self.config_entry.title),
+                        ): str,
+                        vol.Optional(CONF_SERVICES): _searchable_multi_select(
+                            services + options.get(CONF_SERVICES, [])
+                        ),
+                        vol.Optional(CONF_LOAD_COMPONENTS): _searchable_multi_select(
+                            domains + options.get(CONF_LOAD_COMPONENTS, [])
+                        ),
+                    }
+                ),
+                {
+                    key: options[key]
+                    for key in (CONF_SERVICES, CONF_LOAD_COMPONENTS)
+                    if key in options
+                },
             ),
         )
 
     async def async_step_events(self, user_input=None):
         """Manage event options."""
         if user_input is not None:
-            if self.options is not None:
-                self.options[CONF_SUBSCRIBE_EVENTS] = user_input.get(
-                    CONF_SUBSCRIBE_EVENTS, []
-                )
-                return self.async_create_entry(title="", data=self.options)
+            return self._save(
+                {CONF_SUBSCRIBE_EVENTS: user_input.get(CONF_SUBSCRIBE_EVENTS, [])}
+            )
 
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="events",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(
-                        CONF_SUBSCRIBE_EVENTS,
-                        default=self._default(CONF_SUBSCRIBE_EVENTS),
-                    ): _searchable_multi_select(
-                        self.config_entry.options.get(CONF_SUBSCRIBE_EVENTS, []),
-                        custom_value=True,
-                    ),
-                }
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(
+                    {
+                        vol.Optional(CONF_SUBSCRIBE_EVENTS): _searchable_multi_select(
+                            options.get(CONF_SUBSCRIBE_EVENTS, []),
+                            custom_value=True,
+                        ),
+                    }
+                ),
+                options,
             ),
         )
 
-    def _default(self, conf):
-        """Return default value for an option."""
-        return self.config_entry.options.get(conf) or vol.UNDEFINED
+    @callback
+    def _save(self, changes: dict[str, Any]):
+        """Store one group of options and keep the others."""
+        return self.async_create_entry(
+            title="", data={**self.config_entry.options, **changes}
+        )
+
+    def _selection_summary(self, options: Mapping[str, Any]) -> dict[str, str]:
+        """Count remote entities imported with the given include and exclude lists."""
+        remote = _remote_connection(self.hass, self.config_entry.entry_id)
+        remote_entities = remote._all_entity_names if remote else set()
+        selected = sum(
+            entity_selected(
+                entity_id,
+                set(options.get(CONF_INCLUDE_ENTITIES, [])),
+                set(options.get(CONF_INCLUDE_DOMAINS, [])),
+                set(options.get(CONF_EXCLUDE_ENTITIES, [])),
+                set(options.get(CONF_EXCLUDE_DOMAINS, [])),
+            )
+            for entity_id in remote_entities
+        )
+        return {"selected": str(selected), "total": str(len(remote_entities))}
 
     def _domains_and_entities(self):
         """Return all entities and domains exposed by remote instance."""
-        remote = self.hass.data[DOMAIN][self.config_entry.entry_id][
-            CONF_REMOTE_CONNECTION
-        ]
+        remote = _remote_connection(self.hass, self.config_entry.entry_id)
+        options = self.config_entry.options
 
         # Include entities we have in the config explicitly, otherwise they will be
         # pre-selected and not possible to remove if they are no longer present on
         # the remote host.
-        include_entities = set(
-            self.config_entry.options.get(CONF_INCLUDE_ENTITIES, [])
-        )
-        exclude_entities = set(
-            self.config_entry.options.get(CONF_EXCLUDE_ENTITIES, [])
-        )
         entities = sorted(
-            remote._all_entity_names | include_entities | exclude_entities
+            (remote._all_entity_names if remote else set())
+            | set(options.get(CONF_INCLUDE_ENTITIES, []))
+            | set(options.get(CONF_EXCLUDE_ENTITIES, []))
         )
         domains = sorted(
             {entity_id.split(".")[0] for entity_id in entities}
-            | set(self.config_entry.options.get(CONF_INCLUDE_DOMAINS, []))
-            | set(self.config_entry.options.get(CONF_EXCLUDE_DOMAINS, []))
+            | set(options.get(CONF_INCLUDE_DOMAINS, []))
+            | set(options.get(CONF_EXCLUDE_DOMAINS, []))
         )
         return domains, entities
+
+
+class FilterSubentryFlowHandler(ConfigSubentryFlow):
+    """Add or edit one attribute filter of a remote connection."""
+
+    async def async_step_user(self, user_input=None):
+        """Add a filter."""
+        return await self._async_filter_form("user", user_input)
+
+    async def async_step_reconfigure(self, user_input=None):
+        """Edit a filter."""
+        return await self._async_filter_form("reconfigure", user_input)
+
+    async def _async_filter_form(self, step_id: str, user_input):
+        """Show the filter form and store a valid filter."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data = {key: user_input.get(key) for key in FILTER_OPTIONS}
+            if data[CONF_ABOVE] is None and data[CONF_BELOW] is None:
+                errors["base"] = "missing_limit"
+            elif step_id == "user":
+                return self.async_create_entry(title=filter_title(data), data=data)
+            else:
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
+                    title=filter_title(data),
+                    data=data,
+                )
+
+        if user_input is None and step_id == "reconfigure":
+            user_input = dict(self._get_reconfigure_subentry().data)
+
+        remote = _remote_connection(self.hass, self._entry_id)
+        entities = sorted(remote._all_entity_names) if remote else []
+        number = NumberSelector(
+            NumberSelectorConfig(mode=NumberSelectorMode.BOX, step="any")
+        )
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_ENTITY_ID): SelectSelector(
+                    SelectSelectorConfig(
+                        options=entities,
+                        mode=SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
+                    )
+                ),
+                vol.Optional(CONF_UNIT_OF_MEASUREMENT): str,
+                vol.Optional(CONF_ABOVE): number,
+                vol.Optional(CONF_BELOW): number,
+            }
+        )
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
+        )

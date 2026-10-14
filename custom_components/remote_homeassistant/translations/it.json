@@ -4,30 +4,54 @@
     "step": {
       "user": {
         "title": "Seleziona il tipo di installazione",
-        "description": "Il nodo remoto è l'istanza dalla quale vengono raccolti gli stati"
+        "description": "Scegli se questa istanza importa gli stati da un'altra istanza, oppure permette ad altre istanze di collegarsi.",
+        "menu_options": {
+          "connection_details": "Aggiungi un nodo remoto",
+          "remote_node": "Configura come nodo remoto"
+        }
       },
       "connection_details": {
         "title": "Dettagli della connessione",
         "data": {
           "host": "Host",
           "port": "Porta",
-          "secure": "Protetta",
-          "verify_ssl": "Verifica SSL",
           "access_token": "Token di accesso",
-          "max_message_size": "Dimensione massima del messaggio"
+          "secure": "Protetta (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Impostazioni di connessione avanzate",
+            "data": {
+              "verify_ssl": "Verifica SSL",
+              "max_message_size": "Dimensione massima del messaggio"
+            }
+          }
         }
       },
       "entity_selection": {
         "title": "Scegli le entità remote",
-        "description": "Seleziona i domini o le entità da importare prima della prima connessione. Le esclusioni hanno la precedenza. Per importare tutto, seleziona Importa tutte le entità.",
+        "description": "L'istanza remota espone {count} entità. Seleziona i domini o le entità da importare. Le esclusioni hanno la precedenza. Per importare tutto, seleziona Importa tutte le entità.",
         "data": {
           "import_all": "Importa tutte le entità",
-          "include_domains": "Includi domini",
-          "include_entities": "Includi entità",
-          "exclude_domains": "Escludi domini",
-          "exclude_entities": "Escludi entità",
           "entity_prefix": "Prefisso dell'entità (facoltativo)",
           "entity_friendly_name_prefix": "Prefisso del nome dell'entità (facoltativo)"
+        },
+        "sections": {
+          "include": {
+            "name": "Includi",
+            "data": {
+              "include_domains": "Includi domini",
+              "include_entities": "Includi entità"
+            }
+          },
+          "exclude": {
+            "name": "Escludi",
+            "description": "Domini ed entità esclusi non vengono mai importati, anche se inclusi.",
+            "data": {
+              "exclude_domains": "Escludi domini",
+              "exclude_entities": "Escludi entità"
+            }
+          }
         }
       },
       "reauth_confirm": {
@@ -36,6 +60,25 @@
         "data": {
           "access_token": "Nuovo token di accesso"
         }
+      },
+      "reconfigure": {
+        "title": "Modifica la connessione a {name}",
+        "data": {
+          "host": "Host",
+          "port": "Porta",
+          "access_token": "Token di accesso",
+          "secure": "Protetta (HTTPS)"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Impostazioni di connessione avanzate",
+            "data": {
+              "verify_ssl": "Verifica SSL",
+              "max_message_size": "Dimensione massima del messaggio"
+            }
+          }
+        },
+        "description": "Lascia vuoto il token di accesso per mantenere quello salvato."
       }
     },
     "error": {
@@ -50,43 +93,99 @@
     "abort": {
       "already_configured": "Già configurato",
       "reauth_successful": "Riautenticazione riuscita. La connessione remota usa il nuovo token.",
-      "wrong_instance": "Il token appartiene a un'altra istanza remota di Home Assistant."
+      "wrong_instance": "Il token appartiene a un'altra istanza remota di Home Assistant.",
+      "not_supported": "Nessuna opzione di configurazione supportata per un nodo remoto",
+      "yaml_managed": "Questa connessione è definita in YAML. Modificala in configuration.yaml.",
+      "reconfigure_successful": "Le impostazioni della connessione sono state salvate."
+    }
+  },
+  "config_subentries": {
+    "filter": {
+      "entry_type": "Filtro sugli attributi",
+      "initiate_flow": {
+        "user": "Aggiungi filtro"
+      },
+      "step": {
+        "user": {
+          "title": "Filtro sugli attributi",
+          "description": "Ignora gli aggiornamenti di stato delle entità corrispondenti quando il valore è fuori dai limiti. L'ID entità accetta caratteri jolly come `sensor.*_power`; lascialo vuoto per tutte le entità.",
+          "data": {
+            "entity_id": "ID entità",
+            "unit_of_measurement": "Unità di misura",
+            "above": "Ignora sopra",
+            "below": "Ignora sotto"
+          }
+        },
+        "reconfigure": {
+          "title": "Modifica filtro sugli attributi",
+          "description": "Ignora gli aggiornamenti di stato delle entità corrispondenti quando il valore è fuori dai limiti. L'ID entità accetta caratteri jolly come `sensor.*_power`; lascialo vuoto per tutte le entità.",
+          "data": {
+            "entity_id": "ID entità",
+            "unit_of_measurement": "Unità di misura",
+            "above": "Ignora sopra",
+            "below": "Ignora sotto"
+          }
+        }
+      },
+      "error": {
+        "missing_limit": "Imposta almeno un limite: Ignora sopra o Ignora sotto."
+      },
+      "abort": {
+        "reconfigure_successful": "Le impostazioni della connessione sono state salvate."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Opzioni di base (passo 1/4)",
+        "title": "Opzioni del remoto",
+        "description": "Entità importate: **{selected}** su {total} attualmente segnalate dal remoto.\nFiltri sugli attributi: **{filters}**. Aggiungili o modificali dalla pagina dell'integrazione con **Aggiungi filtro**.",
+        "menu_options": {
+          "entities": "Domini ed entità",
+          "naming": "Nomi delle entità",
+          "services": "Servizi remoti",
+          "events": "Eventi sottoscritti"
+        }
+      },
+      "entities": {
+        "title": "Domini ed entità",
+        "description": "Con la selezione salvata vengono importate **{selected}** entità remote su {total}.",
+        "sections": {
+          "include": {
+            "name": "Includi",
+            "data": {
+              "include_domains": "Includi domini",
+              "include_entities": "Includi entità"
+            }
+          },
+          "exclude": {
+            "name": "Escludi",
+            "description": "Domini ed entità esclusi non vengono mai importati, anche se inclusi.",
+            "data": {
+              "exclude_domains": "Escludi domini",
+              "exclude_entities": "Escludi entità"
+            }
+          }
+        }
+      },
+      "naming": {
+        "title": "Nomi delle entità",
+        "description": "I prefissi vengono aggiunti agli ID e ai nomi delle entità importate.",
         "data": {
           "entity_prefix": "Prefisso dell'entità (facoltativo)",
-          "entity_friendly_name_prefix": "Prefisso del nome dell'entità (facoltativo)",
-          "load_components": "Carica il componente (se non è caricato)",
+          "entity_friendly_name_prefix": "Prefisso del nome dell'entità (facoltativo)"
+        }
+      },
+      "services": {
+        "title": "Servizi remoti",
+        "data": {
           "service_prefix": "Prefisso del servizio",
-          "services": "Servizi remoti"
-        }
-      },
-      "domain_entity_filters": {
-        "title": "Filtri di domini ed entità (passo 2/4)",
-        "data": {
-          "include_domains": "Includi domini",
-          "include_entities": "Includi entità",
-          "exclude_domains": "Escludi domini",
-          "exclude_entities": "Escludi entità"
-        }
-      },
-      "general_filters": {
-        "title": "Filtri (passo 3/4)",
-        "description": "Aggiungi un nuovo filtro specificando l'`ID entità`, uno o più attributi del filtro, quindi premi `Invia`. Rimuovi i filtri esistenti deselezionandoli in `Filtri`.\n\nLascia vuoto l'`ID entità` e premi `Invia` per non apportare altre modifiche.",
-        "data": {
-          "filter": "Filtri",
-          "entity_id": "ID entità",
-          "unit_of_measurement": "Unità di misura",
-          "above": "Sopra",
-          "below": "Sotto"
+          "services": "Servizi remoti",
+          "load_components": "Carica il componente (se non è caricato)"
         }
       },
       "events": {
-        "title": "Eventi sottoscritti (passo 4/4)",
+        "title": "Eventi sottoscritti",
         "description": "Cerca gli eventi esistenti oppure digita un nuovo nome nel campo Eventi. Per rimuoverne uno, elimina la selezione e premi Invia.",
         "data": {
           "subscribe_events": "Eventi"

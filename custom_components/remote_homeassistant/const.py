@@ -31,6 +31,9 @@ ATTR_REMOTE_ORIGIN = "remote_homeassistant_origin"
 
 REMOTE_ID = "remote"
 
+# Config subentry type holding one attribute filter.
+SUBENTRY_TYPE_FILTER = "filter"
+
 # replaces 'from homeassistant.core import SERVICE_CALL_LIMIT'
 SERVICE_CALL_LIMIT = 10
 
